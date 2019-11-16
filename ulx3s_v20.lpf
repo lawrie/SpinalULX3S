@@ -3,9 +3,9 @@ BLOCK ASYNCPATHS;
 ## ULX3S v2.x.x and v3.0.x
 
 # The clock "usb" and "gpdi" sheet
-LOCATE COMP "clk_25mhz" SITE "G2";
-IOBUF PORT "clk_25mhz" PULLMODE=NONE IO_TYPE=LVCMOS33;
-FREQUENCY PORT "clk_25mhz" 25 MHZ;
+LOCATE COMP "clk" SITE "G2";
+IOBUF PORT "clk" PULLMODE=NONE IO_TYPE=LVCMOS33;
+FREQUENCY PORT "clk" 25 MHZ;
 
 # JTAG and SPI FLASH voltage 3.3V and options to boot from SPI flash
 # write to FLASH possible any time from JTAG:
@@ -14,16 +14,16 @@ FREQUENCY PORT "clk_25mhz" 25 MHZ;
 SYSCONFIG CONFIG_IOVOLTAGE=3.3 COMPRESS_CONFIG=ON MCCLK_FREQ=62 MASTER_SPI_PORT=DISABLE SLAVE_SPI_PORT=DISABLE SLAVE_PARALLEL_PORT=DISABLE;
 
 ## USBSERIAL FTDI-FPGA serial port "usb" sheet
-LOCATE COMP "ftdi_rxd" SITE "L4"; # FPGA transmits to ftdi
-LOCATE COMP "ftdi_txd" SITE "M1"; # FPGA receives from ftdi
+LOCATE COMP "uart_txd" SITE "L4"; # FPGA transmits to ftdi
+LOCATE COMP "uart_rxd" SITE "M1"; # FPGA receives from ftdi
 LOCATE COMP "ftdi_nrts" SITE "M3"; # FPGA receives
 LOCATE COMP "ftdi_ndtr" SITE "N1"; # FPGA receives
-LOCATE COMP "ftdi_txden" SITE "L3"; # FPGA receives
-IOBUF PORT "ftdi_rxd" PULLMODE=UP IO_TYPE=LVCMOS33 DRIVE=4;
-IOBUF PORT "ftdi_txd" PULLMODE=UP IO_TYPE=LVCMOS33;
+LOCATE COMP "uart_rxden" SITE "L3"; # FPGA receives
+IOBUF PORT "uart_txd" PULLMODE=UP IO_TYPE=LVCMOS33 DRIVE=4;
+IOBUF PORT "uart_rxd" PULLMODE=UP IO_TYPE=LVCMOS33;
 IOBUF PORT "ftdi_nrts" PULLMODE=UP IO_TYPE=LVCMOS33;
 IOBUF PORT "ftdi_ndtr" PULLMODE=UP IO_TYPE=LVCMOS33;
-IOBUF PORT "ftdi_txden" PULLMODE=UP IO_TYPE=LVCMOS33;
+IOBUF PORT "uart_rxden" PULLMODE=UP IO_TYPE=LVCMOS33;
 
 ## LED indicators "blinkey" and "gpio" sheet
 LOCATE COMP "led[7]" SITE "H3";
