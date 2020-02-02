@@ -5,11 +5,11 @@ prog: bin/toplevel.bit
 
 IDCODE ?= 0x21111043 # 12f
 
-bin/toplevel.json: ${VERILOG}
+bin/toplevel.json: ${VERILOG} pll.v
 	mkdir -p bin
 	yosys \
 		-p "synth_ecp5 -json $@" \
-		$<
+		${VERILOG} 
 
 bin/toplevel.config: bin/toplevel.json
 	nextpnr-ecp5 \
