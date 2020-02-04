@@ -16,5 +16,18 @@ object Tools {
     }
     buffer.toArray
   }
+
+  def readmemb(path: String): Array[BigInt] = {
+    val buffer = new ArrayBuffer[BigInt]
+    for (line <- Source.fromFile(path).getLines) {
+      val tokens: Array[String] = line.split("(//)").map(_.trim)
+      if (tokens.length > 0 && tokens(0) != "") {
+        val i = Integer.parseInt(tokens(0), 2)
+        buffer.append(i)
+      }
+    }
+    buffer.toArray
+  }
+
 }
 
