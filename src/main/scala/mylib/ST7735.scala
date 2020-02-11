@@ -6,35 +6,38 @@ import spinal.lib.misc._
 import scala.collection.mutable.ArrayBuffer
 import scala.io.Source
 
+// Driver for ST7735 display
 class ST7735 extends Component {
   val C_init_file = "st7735_init.mem"
   val C_init_size = 110
-  val C_color_bits = 16
   val C_x_size = 128
   val C_y_size = 160
   val C_x_bits = log2Up(C_x_size)
   val C_y_bits = log2Up(C_y_size)
 
   val io = new Bundle {
+    // Color of next pixel
+    val color = in Bits(16 bits)
+
+    // The current x,y co-ordinates and flag for next pixel ready
     val x = out(Reg(UInt(C_x_bits bits)))
     val y = out(Reg(UInt(C_y_bits bits)))
     val next_pixel = out(Reg(Bool))
-    val color = in Bits(C_color_bits bits)
 
+    // SPI pins
     val oled_csn = out Bool
     val oled_clk = out Bool
     val oled_mosi = out Bool
     val oled_dc = out Bool
     val oled_resn = out Bool
 
+    // Diagnostics
     val led = out(Bits(8 bits))
     val gn = out(Bits(14 bits))
     val gp = out(Bits(14 bits))
   }
 
-  val C_oled_init = Mem(Bits(8 bits), wordCount=C_init_size)
-  C_oled_init.initialContent = Tools.readmemh(C_init_file)
-
+  // Registers
   val resetCnt = Reg(UInt(2 bits))
   val initCnt = Reg(UInt(11 bits))
   val data = Reg(Bits(8 bits))
@@ -45,35 +48,42 @@ class ST7735 extends Component {
   val delayCnt = Reg(UInt(25 bits))
   val arg = Reg(UInt(6 bits))
   val delaySet = Reg(Bool) init False
-  val cmd = Reg(UInt(5 bits))
   val lastCmd = Reg(Bits(8 bits))
-  val nextByte = C_oled_init(initCnt(10 downto 4).resized)
 
-  val msCycles = 25008
+  // Number of clock cycles for 1ms delay
+  val msCycles = 25000
 
+  // Diagnostics
   io.led := data
   io.gp := dc.asBits.resized
   io.gn := 0
 
-  io.oled_resn := ~resetCnt(0)
-  io.oled_csn := resetCnt(0)
-  io.oled_dc := dc
-  io.oled_clk := initCnt(0)
-  io.oled_mosi := data(7)
+  // Set SPI pins
+  io.oled_resn := ~resetCnt(0) // Reset set of first clock cycle
+  io.oled_csn := resetCnt(0)   // Then cs set on next cycle
+  io.oled_dc := dc             // False for commands, True for data
+  io.oled_clk := initCnt(0)    // SPI clock is half sysyem clock speed
+  io.oled_mosi := data(7)      // Shift out data
 
-  when (resetCnt < 2) {
+  // Read in the initialisation sequence
+  val C_oled_init = Mem(Bits(8 bits), wordCount=C_init_size)
+  C_oled_init.initialContent = Tools.readmemh(C_init_file)
+
+  // The next byte in the initialisation sequence
+  val nextByte = C_oled_init(initCnt(10 downto 4).resized)
+
+  // Do initialisation sequence, and then start sending pixels
+  when (resetCnt < 2) { 
     resetCnt := resetCnt + 1
-  } elsewhen (delayCnt > 0) {
+  } elsewhen (delayCnt > 0) { // Delay
     delayCnt := delayCnt - 1
   } elsewhen (initCnt(10 downto 4) < C_init_size) {
     initCnt := initCnt + 1
     when (initCnt(3 downto 0) === 0) { // Start of byte
-      //delayCnt := 25000000
       when (init) { // Still initialsation
         dc := False
         arg := arg + 1
         when (arg === 0) { // New command
-          cmd := cmd + 1
           data := 0
           lastCmd := nextByte
         } elsewhen (arg === 1) { // numArgs and delaySet
@@ -98,7 +108,7 @@ class ST7735 extends Component {
           delaySet := False
           arg := 0
         }
-      } otherwise {
+      } otherwise { // Send pixels and set x,y and next_pixel
         byteToggle := ~byteToggle
         dc := True
         data := byteToggle ? io.color(7 downto 0) | io.color(15 downto 8)
@@ -116,13 +126,13 @@ class ST7735 extends Component {
           }
         }
       } 
-    } otherwise {
+    } otherwise { // Shift out byte
       io.next_pixel := False
       when (!initCnt(0)) {
         data := data(6 downto 0) ## B"0"
       }
     }
-  } otherwise {
+  } otherwise { // Initialisation done. start sending pixels
     init := False
     initCnt(10 downto 4) := C_init_size - 1
   }
@@ -133,23 +143,12 @@ class ST7735 extends Component {
 // Values less than 512 bits will be repeated across and down the screen
 class ST7735Hex(width : Int = 64) extends Component {
   val io = new Bundle {
-    val oled_csn = out Bool
-    val oled_clk = out Bool
-    val oled_mosi = out Bool
-    val oled_dc = out Bool
-    val oled_resn = out Bool
     val data = in Bits(width bits)
+    val x = in UInt(7 bits)
+    val y = in UInt(8 bits)
+    val next_pixel = in Bool
+    val color = out Bits(16 bits)
   }
-
-  val oled = new ST7735()
-  io.oled_csn := oled.io.oled_csn
-  io.oled_clk := oled.io.oled_clk
-  io.oled_mosi := oled.io.oled_mosi
-  io.oled_dc := oled.io.oled_dc
-  io.oled_resn := oled.io.oled_resn
-
-  val x = oled.io.x
-  val y = oled.io.y
 
   val C_font_file = "oled_font.mem"
   val C_font_size = 136
@@ -162,7 +161,7 @@ class ST7735Hex(width : Int = 64) extends Component {
 
   val R_data = Reg(Bits(width bits))                   // Current data value
   val R_increment = Reg(UInt(10 bits)) init 1          // Increments through digits and scan lines
-  val R_pixel = Reg(Bits(oled.C_color_bits bits))      // Current pixel color
+  val R_pixel = Reg(Bits(16 bits))      // Current pixel color
   val R_cpixel = Reg(UInt(3 bits)) init 0              // Column of font
   val R_data_index = Reg(UInt(7 bits)) init U"0000010" // Index of hex digit in R_data
   val R_indexed_data = Reg(Bits(4 bits))               // The current hex_digit
@@ -176,8 +175,8 @@ class ST7735Hex(width : Int = 64) extends Component {
   val S_indexed_data = R_data((R_data_index @@ U"00"), 4 bits) // The current hex digit
 
   // Fill Oled screen with hex digits
-  when (oled.io.next_pixel) { // Next pixel requested
-    when (x >= 16 && x < 112) {
+  when (io.next_pixel) { // Next pixel requested
+    when (io.x >= 16 && io.x < 112) {
       // Set the pixel color
       R_pixel := S_pixel
 
@@ -206,7 +205,7 @@ class ST7735Hex(width : Int = 64) extends Component {
     }
   }
 
-  oled.io.color := R_pixel
+  io.color := R_pixel
 }
 
 // Test of ST5535Hex with 64-bit value set by pressing buttons
@@ -232,13 +231,19 @@ class ST7735HexTest extends Component {
   // Leds can be used for diagnostics
   io.led := 0
 
+  val oled = new ST7735()
+  io.oled_csn := oled.io.oled_csn
+  io.oled_clk := oled.io.oled_clk
+  io.oled_mosi := oled.io.oled_mosi
+  io.oled_dc := oled.io.oled_dc
+  io.oled_resn := oled.io.oled_resn
+  
   val oledHex = new ST7735Hex(64)
-  io.oled_csn := oledHex.io.oled_csn
-  io.oled_clk := oledHex.io.oled_clk
-  io.oled_mosi := oledHex.io.oled_mosi
-  io.oled_dc := oledHex.io.oled_dc
-  io.oled_resn := oledHex.io.oled_resn
   oledHex.io.data := data
+  oledHex.io.next_pixel := oled.io.next_pixel
+  oledHex.io.x := oled.io.x
+  oledHex.io.y := oled.io.y
+  oled.io.color := oledHex.io.color
 }
 
 object ST7735HexTest {
@@ -247,6 +252,7 @@ object ST7735HexTest {
   }
 }
 
+// Checkered flag test
 class ST7735Test extends Component {
   val io = new Bundle {
     val oled_csn = out Bool
