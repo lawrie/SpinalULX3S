@@ -2,15 +2,18 @@ package mylib
 
 import spinal.core._
 import spinal.lib._
+import spinal.lib.misc._
 import spinal.sim._
 import spinal.core.sim._
 
-// Driver for ST7735 display
-class ST7735(msCycles: Int = 25000) extends Component {
-  val C_init_file = "st7735_init.mem"
-  val C_init_size = 110
-  val C_x_size = 128
-  val C_y_size = 160
+// Driver for ST7789 display
+class ST7789(msCycles: Int = 25000) extends Component {
+  val C_init_file = "st7789_init.mem"
+  val C_init_size = 36
+  //val C_init_file = "st7789_init_min.mem"
+  //val C_init_size = 9
+  val C_x_size = 256
+  val C_y_size = 256
   val C_x_bits = log2Up(C_x_size)
   val C_y_bits = log2Up(C_y_size)
 
@@ -39,10 +42,10 @@ class ST7735(msCycles: Int = 25000) extends Component {
   // Registers
   val resetCnt = Reg(UInt(2 bits)) init 0
   val initCnt = Reg(UInt(11 bits)) init 0
-  val data = Reg(Bits(8 bits)) init 0
+  val data = Reg(Bits(8 bits))
   val dc = Reg(Bool) init False
   val byteToggle = Reg(Bool) init False
-  val init = Reg(Bool) init True 
+  val init = Reg(Bool) init True
   val numArgs = Reg(UInt(5 bits)) init 0
   val delayCnt = Reg(UInt(25 bits)) init 0
   val arg = Reg(UInt(6 bits)) init 0
@@ -56,9 +59,9 @@ class ST7735(msCycles: Int = 25000) extends Component {
 
   // Set SPI pins
   io.oled_resn := ~resetCnt(0) // Reset set of first clock cycle
-  io.oled_csn := False          // Then cs set on next cycle
+  io.oled_csn := True          // Backlight on 7-pin display
   io.oled_dc := dc             // False for commands, True for data
-  io.oled_clk := initCnt(0)    // SPI clock is half sysyem clock speed
+  io.oled_clk := ~initCnt(0)   // SPI clock is half system clock speed
   io.oled_mosi := data(7)      // Shift out data
 
   // Read in the initialisation sequence
@@ -69,7 +72,7 @@ class ST7735(msCycles: Int = 25000) extends Component {
   val nextByte = C_oled_init(initCnt(10 downto 4).resized)
 
   // Do initialisation sequence, and then start sending pixels
-  when (resetCnt < 2) { 
+  when (resetCnt =/= 2) { 
     resetCnt := resetCnt + 1
   } elsewhen (delayCnt > 0) { // Delay
     delayCnt := delayCnt - 1
@@ -80,7 +83,7 @@ class ST7735(msCycles: Int = 25000) extends Component {
         dc := False
         arg := arg + 1
         when (arg === 0) { // New command
-          data := 0
+          data := nextByte
           lastCmd := nextByte
         } elsewhen (arg === 1) { // numArgs and delaySet
           numArgs := nextByte(4 downto 0).asUInt
@@ -88,7 +91,7 @@ class ST7735(msCycles: Int = 25000) extends Component {
           when (nextByte === 0) { // No args or delay
             arg := 0
           }
-          data := lastCmd
+          data := 0
         } elsewhen (arg <= numArgs+1) { // argument
           data := nextByte
           dc := True
@@ -135,13 +138,13 @@ class ST7735(msCycles: Int = 25000) extends Component {
   }
 }
 
-// Display hex bytes on ST7735 Oled display
+// Display hex bytes on ST7789 display
 // Width of data to be displayed can be 8, 16, 32, 64, 128, 256 0r 512
 // Values less than 512 bits will be repeated across and down the screen
-class ST7735Hex(width : Int = 64) extends Component {
+class ST7789Hex(width : Int = 64) extends Component {
   val io = new Bundle {
     val data = in Bits(width bits)
-    val x = in UInt(7 bits)
+    val x = in UInt(8 bits)
     val y = in UInt(8 bits)
     val next_pixel = in Bool
     val color = out Bits(16 bits)
@@ -173,7 +176,7 @@ class ST7735Hex(width : Int = 64) extends Component {
 
   // Fill Oled screen with hex digits
   when (io.next_pixel) { // Next pixel requested
-    when (io.x >= 16 && io.x < 112) {
+    when (True) {
       // Set the pixel color
       R_pixel := S_pixel
 
@@ -205,9 +208,9 @@ class ST7735Hex(width : Int = 64) extends Component {
   io.color := R_pixel
 }
 
-// Test of ST5535Hex with 64-bit value set by pressing buttons
+// Test of ST7789Hex with 64-bit value set by pressing buttons
 // The value is repeated on each line of the screen
-class ST7735HexTest extends Component {
+class ST7789HexTest extends Component {
   val io = new Bundle {
     val oled_csn = out Bool
     val oled_clk = out Bool
@@ -228,14 +231,14 @@ class ST7735HexTest extends Component {
   // Leds can be used for diagnostics
   io.led := 0
 
-  val oled = new ST7735()
+  val oled = new ST7789()
   io.oled_csn := oled.io.oled_csn
   io.oled_clk := oled.io.oled_clk
   io.oled_mosi := oled.io.oled_mosi
   io.oled_dc := oled.io.oled_dc
   io.oled_resn := oled.io.oled_resn
   
-  val oledHex = new ST7735Hex(64)
+  val oledHex = new ST7789Hex(64)
   oledHex.io.data := data
   oledHex.io.next_pixel := oled.io.next_pixel
   oledHex.io.x := oled.io.x
@@ -243,14 +246,14 @@ class ST7735HexTest extends Component {
   oled.io.color := oledHex.io.color
 }
 
-object ST7735HexTest {
+object ST7789HexTest {
   def main(args: Array[String]) {
-    ULX3SSpinalConfig.generateVerilog(new ST7735HexTest)
+    ULX3SSpinalConfig.generateVerilog(new ST7789HexTest)
   }
 }
 
 // Checkered flag test
-class ST7735Test(msCycles: Int = 25000) extends Component {
+class ST7789Test(msCycles: Int = 0) extends Component {
   val io = new Bundle {
     val oled_csn = out Bool
     val oled_clk = out Bool
@@ -262,7 +265,7 @@ class ST7735Test(msCycles: Int = 25000) extends Component {
     val gn = out Bits(14 bits)
   }.setName("")
 
-  val oled = new ST7735(msCycles)
+  val oled = new ST7789(msCycles)
   io.oled_csn := oled.io.oled_csn
   io.oled_clk := oled.io.oled_clk
   io.oled_mosi := oled.io.oled_mosi
@@ -289,15 +292,15 @@ class ST7735Test(msCycles: Int = 25000) extends Component {
 
 }
 
-object ST7735Test {
+object ST7789Test {
   def main(args: Array[String]) {
-    ULX3SSpinalConfig.generateVerilog(new ST7735Test)
+    ULX3SSpinalConfig.generateVerilog(new ST7789Test)
   }
 }
 
-object ST7735Sim {
+object ST7789Sim {
   def main(args: Array[String]) {
-    SimConfig.withWave.doSim(new ST7735Test(0)){dut =>
+    SimConfig.withWave.doSim(new ST7789Test(1)){dut =>
       //Fork a process to generate the reset and the clock on the dut
       dut.clockDomain.forkStimulus(period = 40)
 
@@ -305,3 +308,4 @@ object ST7735Sim {
     }
   }
 }
+

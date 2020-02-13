@@ -1,0 +1,13 @@
+// SWRESET, delay 150
+01
+80
+96
+// SLPOUT, delay 500
+11
+80
+FF
+// DISPON, delay 500
+29
+80
+FF
+
