@@ -12,8 +12,8 @@ class ST7789(msCycles: Int = 25000) extends Component {
   val C_init_size = 36
   //val C_init_file = "st7789_init_min.mem"
   //val C_init_size = 9
-  val C_x_size = 256
-  val C_y_size = 256
+  val C_x_size = 240
+  val C_y_size = 240
   val C_x_bits = log2Up(C_x_size)
   val C_y_bits = log2Up(C_y_size)
 
@@ -34,15 +34,15 @@ class ST7789(msCycles: Int = 25000) extends Component {
     val oled_resn = out Bool
 
     // Diagnostics
-    val led = out(Bits(8 bits))
-    val gn = out(Bits(14 bits))
-    val gp = out(Bits(14 bits))
+    //val led = out(Bits(8 bits))
+    //val gn = out(Bits(14 bits))
+    //val gp = out(Bits(14 bits))
   }
 
   // Registers
-  val resetCnt = Reg(UInt(2 bits)) init 0
+  val resetCnt = Reg(UInt(23 bits)) init 0
   val initCnt = Reg(UInt(11 bits)) init 0
-  val data = Reg(Bits(8 bits))
+  val data = Reg(Bits(8 bits)) init 0
   val dc = Reg(Bool) init False
   val byteToggle = Reg(Bool) init False
   val init = Reg(Bool) init True
@@ -50,18 +50,18 @@ class ST7789(msCycles: Int = 25000) extends Component {
   val delayCnt = Reg(UInt(25 bits)) init 0
   val arg = Reg(UInt(6 bits)) init 0
   val delaySet = Reg(Bool) init False
-  val lastCmd = Reg(Bits(8 bits))
+  val lastCmd = Reg(Bits(8 bits)) init 0
 
   // Diagnostics
-  io.led := lastCmd
-  io.gp := dc.asBits.resized
-  io.gn := 0
+  //io.led := lastCmd
+  //io.gp := dc.asBits.resized
+  //io.gn := 0
 
   // Set SPI pins
-  io.oled_resn := ~resetCnt(0) // Reset set of first clock cycle
+  io.oled_resn := resetCnt.msb // Reset set of first clock cycle
   io.oled_csn := True          // Backlight on 7-pin display
   io.oled_dc := dc             // False for commands, True for data
-  io.oled_clk := ~initCnt(0)   // SPI clock is half system clock speed
+  io.oled_clk := initCnt(0)    // SPI clock is half system clock speed
   io.oled_mosi := data(7)      // Shift out data
 
   // Read in the initialisation sequence
@@ -72,18 +72,18 @@ class ST7789(msCycles: Int = 25000) extends Component {
   val nextByte = C_oled_init(initCnt(10 downto 4).resized)
 
   // Do initialisation sequence, and then start sending pixels
-  when (resetCnt =/= 2) { 
+  when (!resetCnt.msb) { 
     resetCnt := resetCnt + 1
   } elsewhen (delayCnt > 0) { // Delay
     delayCnt := delayCnt - 1
-  } elsewhen (initCnt(10 downto 4) < C_init_size) {
+  } elsewhen (initCnt(10 downto 4) =/= C_init_size) {
     initCnt := initCnt + 1
     when (initCnt(3 downto 0) === 0) { // Start of byte
       when (init) { // Still initialsation
         dc := False
         arg := arg + 1
         when (arg === 0) { // New command
-          data := nextByte
+          data := 0
           lastCmd := nextByte
         } elsewhen (arg === 1) { // numArgs and delaySet
           numArgs := nextByte(4 downto 0).asUInt
@@ -91,11 +91,11 @@ class ST7789(msCycles: Int = 25000) extends Component {
           when (nextByte === 0) { // No args or delay
             arg := 0
           }
-          data := 0
+          data := lastCmd
         } elsewhen (arg <= numArgs+1) { // argument
           data := nextByte
           dc := True
-          when (arg === numArgs+1 && !delaySet) {
+          when (arg === numArgs + 1 && !delaySet) {
             arg := 0
           }
         } elsewhen (delaySet) { // delay
@@ -253,16 +253,16 @@ object ST7789HexTest {
 }
 
 // Checkered flag test
-class ST7789Test(msCycles: Int = 0) extends Component {
+class ST7789Test(msCycles: Int = 25000) extends Component {
   val io = new Bundle {
     val oled_csn = out Bool
     val oled_clk = out Bool
     val oled_mosi = out Bool
     val oled_dc = out Bool
     val oled_resn = out Bool
-    val led = out Bits(8 bits)
-    val gp = out Bits(14 bits)
-    val gn = out Bits(14 bits)
+    //val led = out Bits(8 bits)
+    //val gp = out Bits(14 bits)
+    //val gn = out Bits(14 bits)
   }.setName("")
 
   val oled = new ST7789(msCycles)
@@ -275,9 +275,9 @@ class ST7789Test(msCycles: Int = 0) extends Component {
   val x = oled.io.x
   val y = oled.io.y
 
-  io.led := oled.io.led
-  io.gp := oled.io.gp
-  io.gn := oled.io.gn
+  //io.led := oled.io.led
+  //io.gp := oled.io.gp
+  //io.gn := oled.io.gn
 
   /*when (y < 42) {
     oled.io.color := 0xF800
