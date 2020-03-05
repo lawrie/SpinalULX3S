@@ -1,4 +1,4 @@
-VERILOG ?= LedButtons.v
+VERILOG ?= HdmiTest.v hdmi.v hdmi_pll.v
 
 prog: bin/toplevel.bit
 	ujprog $<
@@ -15,7 +15,7 @@ bin/toplevel.config: bin/toplevel.json
 	nextpnr-ecp5 \
 		--json $< \
 		--textcfg $@ \
-		--lpf ulx3s_v20.lpf \
+		--lpf ulx3s_hdmi.lpf \
 		--25k \
 		--package CABGA381
 
