@@ -5,6 +5,15 @@ import spinal.lib._
 import spinal.lib.graphic._
 import spinal.lib.graphic.vga._
 import spinal.lib.bus.amba3.apb.{Apb3, Apb3Config, Apb3SlaveFactory}
+import spinal.lib.bus.misc.BusSlaveFactory
+
+case class Hdmi() extends Bundle with IMasterSlave{
+  val gpdi_dp = Bits(4 bits)
+  val gpdi_dn = Bits(4 bits)
+
+  override def asMaster() = this.asOutput()
+  override def asSlave = this.asInput()
+}
 
 // Puts a vertically striped flag on the screen
 class HdmiStripeTest(rgbConfig: RgbConfig) extends Component{
@@ -55,7 +64,7 @@ class Apb3HdmiConsoleCtrl(rgbConfig: RgbConfig = RgbConfig(8, 8, 8)) extends Com
 
   val busCtrl = Apb3SlaveFactory(io.bus)
 
-  busCtrl.createAndDriveFlow(Bits(8 bits), address = 0) >-> hdmiConsoleCtrl.io.chars
+  hdmiConsoleCtrl.driveFrom(busCtrl)
 }  
 
 // Controller for sending characters to VGA/HDMI screen
@@ -84,8 +93,9 @@ class HdmiConsoleCtrl(rgbConfig: RgbConfig) extends Component{
   val currLine = Reg(UInt(hBits bits)) init 0      // The line being written to
   val linePos = Reg(UInt(wBits bits)) init 0       // The character position in the line being written
 
-  // The line after the current one with wraparound. The start line of the screen
-  // as the line being written to is always at the bottom of the sceen
+  // The line after the current one with wraparound. 
+  // This is also the start line of the screen,
+  // as the line being written to is always at the bottom of the screen
   val nextLine = (currLine < h - 1) ? (currLine + U(1, hBits bits)) | U(0, hBits bits)
 
   // Set up the line start and lengths arrays
@@ -157,14 +167,18 @@ class HdmiConsoleCtrl(rgbConfig: RgbConfig) extends Component{
       }
     }
   }
+
+   def driveFrom(busCtrl : BusSlaveFactory, baseAddress : Int = 0) = new Area {
+     busCtrl.createAndDriveFlow(Bits(8 bits), address = 0) >-> io.chars
+   }
 }
 
+// Test of HdmiConsoleCtrl
 class HdmiTest() extends Component {
   val io = new Bundle {
     val clk = in Bool
     val reset = in Bool
-    val gpdi_dp = out Bits(4 bits)
-    val gpdi_dn = out Bits(4 bits)
+    val hdmi = master(Hdmi())
     val led = out Bits(8 bits)
   }
 
@@ -174,52 +188,48 @@ class HdmiTest() extends Component {
   val coreClockDomain = ClockDomain(io.clk, io.reset)
 
   val coreArea = new ClockingArea(coreClockDomain) {
-    val vgaTest = new HdmiConsoleCtrl(RgbConfig(8, 8, 8))
-    val vSync = vgaTest.io.vga.vSync
-    val hSync = vgaTest.io.vga.hSync
-    val red = vgaTest.io.vga.colorEn ? vgaTest.io.vga.color.r.asBits | B"00000000"
-    val green = vgaTest.io.vga.colorEn ? vgaTest.io.vga.color.g.asBits | B"00000000"
-    val blue = vgaTest.io.vga.colorEn ? vgaTest.io.vga.color.b.asBits | B"00000000"
+    val hdmiConsoleCtrl = new HdmiConsoleCtrl(RgbConfig(8, 8, 8))
+    
+    val vga2Hdmi = new Vga2Hdmi()
+    vga2Hdmi.io.pixclk := pll.io.clkout1
+    vga2Hdmi.io.pixclk_x5 := pll.io.clkout0
+    
+    io.hdmi <> vga2Hdmi.io.hdmi
 
-    io.led := vgaTest.io.led
+    // VGA to HDMI converter needs signals blanked when colorEn is false
+    vga2Hdmi.io.vga.color.r := hdmiConsoleCtrl.io.vga.colorEn ? hdmiConsoleCtrl.io.vga.color.r | U"00000000"
+    vga2Hdmi.io.vga.color.g := hdmiConsoleCtrl.io.vga.colorEn ? hdmiConsoleCtrl.io.vga.color.g | U"00000000"
+    vga2Hdmi.io.vga.color.b := hdmiConsoleCtrl.io.vga.colorEn ? hdmiConsoleCtrl.io.vga.color.b | U"00000000"
+    vga2Hdmi.io.vga.hSync := hdmiConsoleCtrl.io.vga.hSync
+    vga2Hdmi.io.vga.vSync := hdmiConsoleCtrl.io.vga.vSync
+    vga2Hdmi.io.vga.colorEn := hdmiConsoleCtrl.io.vga.colorEn
 
+    io.led := hdmiConsoleCtrl.io.led
+
+    hdmiConsoleCtrl.io.chars.valid := False
+    hdmiConsoleCtrl.io.chars.payload := 0
+    
     val cw = 24
     val count = Reg(UInt(cw bits)) init 0
     val pattern = Reg(UInt(5 bits)) init 31
 
-    vgaTest.io.chars.valid := False
-    
     count := count + 1
-
-    vgaTest.io.chars.payload := 0
-
+    
     // Slowly send characters, with decreasing line length
     when (count(cw - 6 downto 0) === 0) {
       when (count(cw -1 downto cw - 5) < 10) {
-        vgaTest.io.chars.payload := (count(cw - 1 downto cw - 5) + 0x30).asBits.resized
-        vgaTest.io.chars.valid := (count(cw - 1 downto cw - 5) <= pattern)
+        hdmiConsoleCtrl.io.chars.payload := (count(cw - 1 downto cw - 5) + 0x30).asBits.resized
+        hdmiConsoleCtrl.io.chars.valid := (count(cw - 1 downto cw - 5) <= pattern)
       } elsewhen (count(cw - 1 downto cw - 5) === 31) {
-        vgaTest.io.chars.payload := 0x0a
-        vgaTest.io.chars.valid := True
+        hdmiConsoleCtrl.io.chars.payload := 0x0a
+        hdmiConsoleCtrl.io.chars.valid := True
         pattern := pattern - 1
       } otherwise {
-        vgaTest.io.chars.payload := (0x41 + (count(cw - 1 downto cw - 5) - 10)).asBits.resized
-        vgaTest.io.chars.valid := (count(cw - 1 downto cw - 5) <= pattern)
+        hdmiConsoleCtrl.io.chars.payload := (0x41 + (count(cw - 1 downto cw - 5) - 10)).asBits.resized
+        hdmiConsoleCtrl.io.chars.valid := (count(cw - 1 downto cw - 5) <= pattern)
       }
     }
 
-    val hdmi = new Ulx3sHdmi()
-    hdmi.io.pixclk := pll.io.clkout1
-    hdmi.io.pixclk_x5 := pll.io.clkout0
-    hdmi.io.red := red
-    hdmi.io.green := green
-    hdmi.io.blue := blue
-    hdmi.io.hSync := hSync
-    hdmi.io.vSync := vSync
-    hdmi.io.vde := vgaTest.io.vga.colorEn
-
-    io.gpdi_dp := hdmi.io.gpdi_dp
-    io.gpdi_dn := hdmi.io.gpdi_dn
   }
 }
 
