@@ -12,11 +12,10 @@ case class Hdmi() extends Bundle with IMasterSlave{
   val gpdi_dn = Bits(4 bits)
 
   override def asMaster() = this.asOutput()
-  override def asSlave = this.asInput()
 }
 
 // Puts a vertically striped flag on the screen
-class HdmiStripeTest(rgbConfig: RgbConfig) extends Component{
+class HdmiStripeTest(rgbConfig: RgbConfig = RgbConfig(8, 8, 8)) extends Component{
   val io = new Bundle{
     val vga = master(Vga(rgbConfig))
   }
@@ -52,16 +51,31 @@ object Apb3HdmiConsoleCtrl{
   )
 }
 
-class Apb3HdmiConsoleCtrl(rgbConfig: RgbConfig = RgbConfig(8, 8, 8)) extends Component{
+case class Apb3HdmiConsoleCtrl(rgbConfig: RgbConfig = RgbConfig(8, 8, 8)) extends Component{
   val io = new Bundle {
     val bus = slave(Apb3(Apb3HdmiConsoleCtrl.getApb3Config))
-    val vga = master(Vga(rgbConfig))
+    val hdmi = master(Hdmi())
+    val pixclk = in Bool
+    val pixclk_x5 = in Bool
   }
 
   // Instantiate an HDMI console controller
   val hdmiConsoleCtrl = new HdmiConsoleCtrl(rgbConfig)
-  io.vga <> hdmiConsoleCtrl.io.vga
 
+  val vga2Hdmi = new Vga2Hdmi()
+  vga2Hdmi.io.pixclk := io.pixclk
+  vga2Hdmi.io.pixclk_x5 := io.pixclk_x5
+
+  io.hdmi <> vga2Hdmi.io.hdmi
+
+  vga2Hdmi.io.vga := hdmiConsoleCtrl.io.vga
+  // VGA to HDMI converter needs signals blanked when colorEn is false
+  when(!hdmiConsoleCtrl.io.vga.colorEn){
+    vga2Hdmi.io.vga.color.r := 0
+    vga2Hdmi.io.vga.color.g := 0
+    vga2Hdmi.io.vga.color.b := 0
+  }
+  
   val busCtrl = Apb3SlaveFactory(io.bus)
 
   hdmiConsoleCtrl.driveFrom(busCtrl)
@@ -69,7 +83,7 @@ class Apb3HdmiConsoleCtrl(rgbConfig: RgbConfig = RgbConfig(8, 8, 8)) extends Com
 
 // Controller for sending characters to VGA/HDMI screen
 // Has uart-style interface
-class HdmiConsoleCtrl(rgbConfig: RgbConfig) extends Component{
+class HdmiConsoleCtrl(rgbConfig: RgbConfig = RgbConfig(8, 8, 8)) extends Component{
   val io = new Bundle{
     val vga = master(Vga(rgbConfig))
     val chars = slave Flow(Bits(8 bits))
@@ -195,14 +209,14 @@ class HdmiTest() extends Component {
     vga2Hdmi.io.pixclk_x5 := pll.io.clkout0
     
     io.hdmi <> vga2Hdmi.io.hdmi
-
+    
+    vga2Hdmi.io.vga := hdmiConsoleCtrl.io.vga
     // VGA to HDMI converter needs signals blanked when colorEn is false
-    vga2Hdmi.io.vga.color.r := hdmiConsoleCtrl.io.vga.colorEn ? hdmiConsoleCtrl.io.vga.color.r | U"00000000"
-    vga2Hdmi.io.vga.color.g := hdmiConsoleCtrl.io.vga.colorEn ? hdmiConsoleCtrl.io.vga.color.g | U"00000000"
-    vga2Hdmi.io.vga.color.b := hdmiConsoleCtrl.io.vga.colorEn ? hdmiConsoleCtrl.io.vga.color.b | U"00000000"
-    vga2Hdmi.io.vga.hSync := hdmiConsoleCtrl.io.vga.hSync
-    vga2Hdmi.io.vga.vSync := hdmiConsoleCtrl.io.vga.vSync
-    vga2Hdmi.io.vga.colorEn := hdmiConsoleCtrl.io.vga.colorEn
+    when(!hdmiConsoleCtrl.io.vga.colorEn){
+      vga2Hdmi.io.vga.color.r := 0
+      vga2Hdmi.io.vga.color.g := 0
+      vga2Hdmi.io.vga.color.b := 0
+    }
 
     io.led := hdmiConsoleCtrl.io.led
 
