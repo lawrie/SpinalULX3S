@@ -4,6 +4,7 @@ import spinal.core._
 import spinal.lib._
 import spinal.lib.graphic._
 import spinal.lib.graphic.vga._
+import spinal.lib.bus.amba3.apb.{Apb3, Apb3Config, Apb3SlaveFactory}
 
 // Puts a vertically striped flag on the screen
 class HdmiStripeTest(rgbConfig: RgbConfig) extends Component{
@@ -35,12 +36,34 @@ class HdmiStripeTest(rgbConfig: RgbConfig) extends Component{
   }
 }
 
+object Apb3HdmiConsoleCtrl{
+  def getApb3Config = Apb3Config(
+    addressWidth = 4,
+    dataWidth    = 32
+  )
+}
+
+class Apb3HdmiConsoleCtrl(rgbConfig: RgbConfig = RgbConfig(8, 8, 8)) extends Component{
+  val io = new Bundle {
+    val bus = slave(Apb3(Apb3HdmiConsoleCtrl.getApb3Config))
+    val vga = master(Vga(rgbConfig))
+  }
+
+  // Instantiate an HDMI console controller
+  val hdmiConsoleCtrl = new HdmiConsoleCtrl(rgbConfig)
+  io.vga <> hdmiConsoleCtrl.io.vga
+
+  val busCtrl = Apb3SlaveFactory(io.bus)
+
+  busCtrl.createAndDriveFlow(Bits(8 bits), address = 0) >-> hdmiConsoleCtrl.io.chars
+}  
+
 // Controller for sending characters to VGA/HDMI screen
 // Has uart-style interface
-class HdmiUartTest(rgbConfig: RgbConfig) extends Component{
+class HdmiConsoleCtrl(rgbConfig: RgbConfig) extends Component{
   val io = new Bundle{
     val vga = master(Vga(rgbConfig))
-    val chars = slave Stream(Bits(8 bits))
+    val chars = slave Flow(Bits(8 bits))
     val led = out Bits(8 bits)
   }
 
@@ -70,9 +93,6 @@ class HdmiUartTest(rgbConfig: RgbConfig) extends Component{
     lineStart(i) := i * w
     lineLength(i).init(0)
   }
-
-  // Ready is set immediately as characters are written straight to frame buffer in one cycle
-  io.chars.ready := True
 
   // Write incoming character to the next position in the current line in the frame buffer
   when (io.chars.valid) {
@@ -154,7 +174,7 @@ class HdmiTest() extends Component {
   val coreClockDomain = ClockDomain(io.clk, io.reset)
 
   val coreArea = new ClockingArea(coreClockDomain) {
-    val vgaTest = new HdmiUartTest(RgbConfig(8, 8, 8))
+    val vgaTest = new HdmiConsoleCtrl(RgbConfig(8, 8, 8))
     val vSync = vgaTest.io.vga.vSync
     val hSync = vgaTest.io.vga.hSync
     val red = vgaTest.io.vga.colorEn ? vgaTest.io.vga.color.r.asBits | B"00000000"
