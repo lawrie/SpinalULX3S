@@ -141,7 +141,7 @@ class UsbTxPhy extends Component {
     
     when (io.phyMode) {
       rTxDp := !seState && rSdNrziO
-      rTxDp := !seState && !rSdNrziO
+      rTxDn := !seState && !rSdNrziO
     } otherwise {
       rTxDp := rSdNrziO
       rTxDn := seState

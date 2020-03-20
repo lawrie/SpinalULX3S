@@ -9,9 +9,10 @@ class UsbHostHid(
   C_report_interval : Int = 16,
   C_report_endpoint : Int = 1,
   C_report_length : Int = 20,
-  C_keepalive_setup : Bool = True,
-  C_keepalive_status : Bool = True,
-  C_keepalive_report : Bool = True,
+  C_report_length_strict : Boolean = false,
+  C_keepalive_setup : Boolean = true,
+  C_keepalive_status : Boolean = true,
+  C_keepalive_report : Boolean = true,
   C_keepalive_phase_bits : Int = 12, // keepalive/sof frequency 12:low speed, 15:full speed
   // NOTE: C_keepalive_phase_bits=12 at C_usb_speed=0 ( 6 MHz)
   //    or C_keepalive_phase_bits=15 at C_usb_speed=1 (48 MHz)
@@ -19,7 +20,7 @@ class UsbHostHid(
   // USB standard requires keepalive < 1 ms but SOF every 1 ms +-1%
   // so far all full-speed devices tested accept SOF at 0.68 ms rate
   C_keepalive_phase : Int = 2048, // 4044:KEEPALIVE low speed, 2048:low/full speed good for both
-  C_keepalive_type : Bool = True, // 1:KEEPALIVE low speed (may work for full speed, LUT saver), 0:SOF full speed
+  C_keepalive_type : Boolean = true, // 1:KEEPALIVE low speed (may work for full speed, LUT saver), 0:SOF full speed
   C_setup_rom_file : String = "usbh_setup_rom.mem",
   C_setup_rom_len : Int = 16,
   // FIXME: For C_usb_speed=1 reset timing is 4x shorter than required by USB standard
@@ -29,7 +30,6 @@ class UsbHostHid(
     val usbDif = in Bool
     val usbDp = inout(Analog(Bool))
     val usbDn = inout(Analog(Bool))
-    val busReset = in Bool
     val led = out Bits(8 bits)
     val rxCount = out UInt(16 bits)
     val rxDone = out Bool
@@ -53,8 +53,8 @@ class UsbHostHid(
   val rDataStatus = Reg(Bool) init False
   val rPacketCounter = Reg(UInt(16 bits))
   val rState = Reg(Bits(2 bits)) init 0
-  val rRetry = Reg(UInt(C_setup_retry bits))
-  val rSlow = Reg(UInt(17 bits))
+  val rRetry = Reg(UInt(C_setup_retry+1 bits))
+  val rSlow = Reg(UInt(18 bits))
   val rResetPending = Reg(Bool)
   val rResetAccepted = Reg(Bool) init False
   val startI = Reg(Bool) init False
@@ -71,7 +71,7 @@ class UsbHostHid(
   val rSetAddressFound = Reg(Bool)
   val rDevAddressRequested = Reg(Bits(7 bits))
   val rDevAddressConfirmed = Reg(Bits(7 bits))
-  val rStoredResponse = Reg(Bits(7 bits))
+  val rStoredResponse = Reg(Bits(8 bits))
 
   val rWLength = Reg(UInt(16 bits))
   val rBytesRemaining = Reg(UInt(16 bits))
@@ -109,15 +109,14 @@ class UsbHostHid(
   val responseO = Bits(8 bits)
   val txPopO = Bool
   val txDoneO = Bool
-  val tPopO = Bool
   val rxCountO = UInt(16 bits)
   val rxDataO = Bits(8 bits)
   val crcErrO = Bool
   val rxPushO = Bool
 
-  val txDataI = C_setup_rom(rSetupRomAddr)
+  val txDataI = C_setup_rom(rSetupRomAddr.resized)
   val sSofDev = rSofCounter(10 downto 4).asBits
-  val sSofEp = rSofCounter(4 downto 0).asBits
+  val sSofEp = rSofCounter(3 downto 0).asBits
 
   val reverseTokenDevI = tokenDevI(0).asBits ##
                          tokenDevI(1).asBits ##
@@ -131,21 +130,25 @@ class UsbHostHid(
                          tokenEpI(1).asBits ##
                          tokenEpI(2).asBits ##
                          tokenEpI(3).asBits
-      
+
+  val sReportLengthOK = Bool(C_report_length_strict) ? (rRxCount === C_report_length) | (rRxCount =/= 0)
+
   if (C_usb_speed == 1) {
     sRxd := io.usbDif
     sRxdp := io.usbDp
     sRxdn := io.usbDn
 
-    io.usbDp.assignFromBits(!sTxoe ? sTxdp.asBits | B"x")
-    io.usbDn.assignFromBits(!sTxoe ? sTxdn.asBits | B"x")
+    when (!sTxoe) (io.usbDp := sTxdp)
+
+    when (!sTxoe) (io.usbDn := sTxdn)
   } else {
     sRxd := ~io.usbDif
-    sRxdp := io.usbDp
-    sRxdn := io.usbDn
+    sRxdp := io.usbDn
+    sRxdn := io.usbDp
 
-    io.usbDp.assignFromBits(!sTxoe ? sTxdn.asBits | B"x")
-    io.usbDn.assignFromBits(!sTxoe ? sTxdp.asBits | B"x")
+    when (!sTxoe) (io.usbDp := sTxdn)
+
+    when (!sTxoe) (io.usbDn := sTxdp)
   }
 
   val usbPhy = new UsbPhy
@@ -184,73 +187,73 @@ class UsbHostHid(
         rDevAddressConfirmed := 0
         rRetry := 0
       }
-    }
-    is(C_STATE_SETUP) {
-      when (sTransmissionOver) {
-        rTxOverDebug := True
-        when (tokenPidI === 0x2d) {
-          when (rxDoneO && responseO === 0xd2) {
-            rSetupRomAddrAcked := rSetupRomAddr
-            rRetry := 0
-          } otherwise {
-            rSetupRomAddr := rSetupRomAddrAcked
-            when (!rRetry(C_setup_retry)) {
-              rRetry := rRetry + 1
-            }
-          }
-        }
-      } otherwise {
-        when (txPopO) {
-          rSetupRomAddr := rSetupRomAddr + 1
-          rSetupByteCounter := rSetupByteCounter + 1
-        }
-        rStoredResponse := 0
-      }
-    }
-    is(C_STATE_REPORT) {
-      when (sTransmissionOver) {
-        when (timeoutO && !rTimeout) {
-          when (!rRetry(C_setup_retry)) {
-            rRetry := rRetry + 1
-          }
-        } otherwise {
-          when (txDoneO) {
-            rRetry := 0
-          }
-        }
-      }
-    }
-    default {
-      when (sTransmissionOver) {
-        when (tokenPidI === 0xe1) {
-          when (rxDoneO && responseO === 0xd2) {
-            rStoredResponse := responseO
-            rSetupRomAddrAcked := rSetupRomAddr
-            rRetry := 0
-          } otherwise {
-            rSetupRomAddr := rSetupRomAddrAcked
-            when (!rRetry(C_setup_retry)) {
-              rRetry := rRetry + 1
-            }
-          }
-        } otherwise {
-          when (timeoutO && !rTimeout) {
-            rRetry := rRetry + 1
-          } otherwise {
-            when (rxDoneO) {
-              rStoredResponse := responseO
-              when (responseO === 0x48) {
-                rRetry := 0
-                rDevAddressConfirmed := rDevAddressRequested
-              } otherwise {
+      is(C_STATE_SETUP) {
+        when (sTransmissionOver) {
+          rTxOverDebug := True
+          when (tokenPidI === 0x2d) {
+            when (rxDoneO && responseO === 0xd2) {
+              rSetupRomAddrAcked := rSetupRomAddr
+              rRetry := 0
+            } otherwise {
+              rSetupRomAddr := rSetupRomAddrAcked
+              when (!rRetry(C_setup_retry)) {
                 rRetry := rRetry + 1
               }
             }
           }
+        } otherwise {
+          when (txPopO) {
+            rSetupRomAddr := rSetupRomAddr + 1
+            rSetupByteCounter := rSetupByteCounter + 1
+          }
+          rStoredResponse := 0
         }
-      } otherwise {
-        when (tPopO) {
-          rSetupRomAddr := rSetupRomAddr + 1
+      }
+      is(C_STATE_REPORT) {
+        when (sTransmissionOver) {
+          when (timeoutO && !rTimeout) {
+            when (!rRetry(C_setup_retry)) {
+              rRetry := rRetry + 1
+            }
+          } otherwise {
+            when (txDoneO) {
+              rRetry := 0
+            }
+          }
+        }
+      }
+      default {
+        when (sTransmissionOver) {
+          when (tokenPidI === 0xe1) {
+            when (rxDoneO && responseO === 0xd2) {
+              rStoredResponse := responseO
+              rSetupRomAddrAcked := rSetupRomAddr
+              rRetry := 0
+            } otherwise {
+              rSetupRomAddr := rSetupRomAddrAcked
+              when (!rRetry(C_setup_retry)) {
+                rRetry := rRetry + 1
+              }
+            }
+          } otherwise {
+            when (timeoutO && !rTimeout) {
+              rRetry := rRetry + 1
+            } otherwise {
+              when (rxDoneO) {
+                rStoredResponse := responseO
+                when (responseO === 0x48) {
+                  rRetry := 0
+                  rDevAddressConfirmed := rDevAddressRequested
+                } otherwise {
+                  rRetry := rRetry + 1
+                }
+              }
+            }
+          }
+        } otherwise {
+          when (txPopO) {
+            rSetupRomAddr := rSetupRomAddr + 1
+          }
         }
       }
     }
@@ -286,10 +289,10 @@ class UsbHostHid(
         }
       }
     }
-  }
-  default {
-    rWLength := 0
-    rSetAddressFound := False
+    default {
+      rWLength := 0
+      rSetAddressFound := False
+    }
   }
 
   rAdvanceData := False
@@ -329,11 +332,11 @@ class UsbHostHid(
             rState := C_STATE_DETACHED
           }
 
-          when (rSlow(C_keepalive_phase_bits - 1 downto 0) === C_keepalive_phase && C_keepalive_setup) {
+          when (rSlow(C_keepalive_phase_bits - 1 downto 0) === C_keepalive_phase && Bool(C_keepalive_setup)) {
             sofTransferI := True
-            inTransferI := C_keepalive_type
+            inTransferI := Bool(C_keepalive_type)
 
-            when (C_keepalive_type) {
+            when (Bool(C_keepalive_type)) {
               tokenPidI(1 downto 0) := B"00"
             } otherwise {
               tokenPidI := 0xa5
@@ -391,11 +394,11 @@ class UsbHostHid(
         when (!rSlow(C_report_interval)) {
           rSlow := rSlow + 1
 
-          when (rSlow(C_keepalive_phase_bits-1 downto 0) === C_keepalive_phase & C_keepalive_report) {
+          when (rSlow(C_keepalive_phase_bits-1 downto 0) === C_keepalive_phase & Bool(C_keepalive_report)) {
             sofTransferI := True
-            inTransferI := C_keepalive_type
+            inTransferI := Bool(C_keepalive_type)
 
-            when (C_keepalive_type) {
+            when (Bool(C_keepalive_type)) {
               tokenPidI(1 downto 0) := B"00"
             } otherwise {
               tokenPidI := 0xa5
@@ -415,7 +418,7 @@ class UsbHostHid(
           inTransferI := True
           tokenPidI := 0x69
 
-          when (!C_keepalive_type) {
+          when (!Bool(C_keepalive_type)) {
             tokenDevI := rDevAddressConfirmed
           }
 
@@ -443,11 +446,11 @@ class UsbHostHid(
             rState := C_STATE_DETACHED
           }
 
-          when (rSlow(C_keepalive_phase_bits-1 downto 0) === C_keepalive_phase && C_keepalive_status) {
+          when (rSlow(C_keepalive_phase_bits-1 downto 0) === C_keepalive_phase && Bool(C_keepalive_status)){
             sofTransferI := True
-            inTransferI := C_keepalive_type
+            inTransferI := Bool(C_keepalive_type)
 
-            when (C_keepalive_type) {
+            when (Bool(C_keepalive_type)) {
               tokenPidI(1 downto 0) := B"00"
             } otherwise {
               tokenPidI := 0xa5
@@ -473,7 +476,7 @@ class UsbHostHid(
             tokenPidI := 0xe1
           }
 
-          when (!C_keepalive_type) {
+          when (!Bool(C_keepalive_type)) {
             tokenDevI := rDevAddressConfirmed
           }
 
@@ -491,7 +494,7 @@ class UsbHostHid(
           }
 
           when (rCtrlIn) {
-            when (rStoredResponse === 0x48 || rStoredResponse === 0xc3) {
+            when (rStoredResponse === B(0x48, 8 bits) || rStoredResponse === B(0xc3, 8 bits)) {
               rAdvanceData := True
 
               when (rBytesRemaining(15 downto 3) === 0) {
@@ -534,7 +537,7 @@ class UsbHostHid(
       when (rAdvanceData) {
         when (rBytesRemaining =/= 0) {
           when (rBytesRemaining(15 downto 3) =/= 0) {
-            rBytesRemaining(16 downto 3) := rBytesRemaining(15 downto 3) + 1
+            rBytesRemaining(15 downto 3) := rBytesRemaining(15 downto 3) + 1
           } otherwise {
             rBytesRemaining(2 downto 0) := 0
           }
@@ -581,7 +584,7 @@ class UsbHostHid(
   rRxCount := rxCountO
 
   when (rxPushO) {
-    rReportBuf(rRxCount) := rxDataO
+    rReportBuf(rRxCount.resized) := rxDataO
   }
 
   rRxDone := rxDoneO
@@ -593,7 +596,7 @@ class UsbHostHid(
   }
 
   rHidValid := (rRxDone && !rxDoneO && !rCrcErr && !timeoutO && 
-                rState === C_STATE_REPORT && rRxCount =/= 0)
+                rState === C_STATE_REPORT && sReportLengthOK)
 
   for (i <- 0 to C_report_length - 1) {
     io.hidReport(i*8+7 downto i*8) := rReportBuf(i)

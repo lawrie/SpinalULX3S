@@ -21,11 +21,11 @@ class UsbRxPhy(inputHz : Int = 6000000,
     val data = out Bits(8 bits)
   }
 
-  val paInc = U((1 << (paBits - 1)) * (inputHz / bitHz), paBits bits)
+  val paInc = U((1 << (paBits - 1)) * (bitHz / inputHz), paBits bits)
   val paCompensate = paInc(paBits-2 downto 0) + paInc(paBits-2 downto 0) + paInc(paBits-2 downto 0)
   val paInit = paCompensate
   val validInit = 0x80
-  val idleCntInit = B"100000"
+  val idleCntInit = B"1000000"
 
   val rPa = Reg(UInt(paBits bits))
   val rDifShift = Reg(Bits(2 bits))

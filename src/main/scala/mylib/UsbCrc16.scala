@@ -6,7 +6,7 @@ import spinal.lib._
 class UsbCrc16 extends Component {
   val io = new Bundle {
     val crc_i = in Bits(16 bits)
-    val data_i = in Bits(7 bits)
+    val data_i = in Bits(8 bits)
     val crc_o = out Bits(16 bits)
   }
  

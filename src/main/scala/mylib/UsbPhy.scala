@@ -15,10 +15,10 @@ class UsbPhy extends Component {
     val txoe = out Bool
     val ceO = out Bool
     val lineCtrlI = in Bool
-    val dataOutI = in Bits(7 bits)
+    val dataOutI = in Bits(8 bits)
     val txValidI = in Bool
     val txReadyO = out Bool
-    val dataInO = out Bits(7 bits)
+    val dataInO = out Bits(8 bits)
     val rxValidO = out Bool
     val rxActiveO = out Bool
     val rxErrorO = out Bool
@@ -28,18 +28,22 @@ class UsbPhy extends Component {
   val rRstCnt = Reg(UInt(5 bits)) init 0
   val rUsbRstOut = Reg(Bool) init False
 
+  val sTxoe = Bool
+
+  val usbRxPhy = new UsbRxPhy
+  usbRxPhy.io.usbDif := io.rxd
+  usbRxPhy.io.usbDp := io.rxdp
+  usbRxPhy.io.usbDn := io.rxdn
+  usbRxPhy.io.rxEn := sTxoe
+
   val usbTxPhy = new UsbTxPhy
   usbTxPhy.io.phyMode := io.phyTxMode
   usbTxPhy.io.lineCtrlI := io.lineCtrlI
   usbTxPhy.io.dataOutI := io.dataOutI
   usbTxPhy.io.txValidI := io.txValidI
+  usbTxPhy.io.fsCe := usbRxPhy.io.clkRecoveredEdge
 
-  val usbRxPhy = new UsbRxPhy
-  usbRxPhy.io.clkRecoveredEdge := usbTxPhy.io.fsCe
-  usbRxPhy.io.usbDif := io.rxd
-  usbRxPhy.io.usbDp := io.rxdp
-  usbRxPhy.io.usbDn := io.rxdn
-  usbRxPhy.io.rxEn := usbTxPhy.io.txoe
+  sTxoe := usbTxPhy.io.txoe
 
   when (usbRxPhy.io.lineState =/= B"00") {
     rRstCnt := 0

@@ -304,6 +304,10 @@ class UsbhSie extends Component {
     rDataValidQ := rDataValidQ(3 downto 1) ## B"0"
   }
 
+  rDataCrcQ := (!io.utmiRxActiveI).asBits ## rDataCrcQ(1).asBits
+
+  rRxActiveQ := io.utmiRxActiveI.asBits ## rRxActiveQ(3 downto 1)
+
   val usbCrc16 = new UsbCrc16
   usbCrc16.io.crc_i :=  rCrcSumQ
   usbCrc16.io.data_i := crcDataInW
