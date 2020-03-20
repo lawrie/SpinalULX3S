@@ -81,6 +81,12 @@ class UsbHostHid(
   val rTxOverDebug = Reg(Bool) init True
   val rSofCounter = Reg(UInt(11 bits))
   
+  val rReportBuf = Reg(Vec(Bits(8 bits), C_report_length))
+  val rRxCount = Reg(UInt(16 bits))
+  val rRxDone = Reg(Bool)
+  val rCrcErr = Reg(Bool)
+  val rHidValid = Reg(Bool)
+  
   val C_setup_rom = Mem(Bits(8 bits), wordCount = C_setup_rom_len)
   C_setup_rom.initialContent = Tools.readmemh(C_setup_rom_file)
 
@@ -104,11 +110,28 @@ class UsbHostHid(
   val txPopO = Bool
   val txDoneO = Bool
   val tPopO = Bool
+  val rxCountO = UInt(16 bits)
+  val rxDataO = Bits(8 bits)
+  val crcErrO = Bool
+  val rxPushO = Bool
 
   val txDataI = C_setup_rom(rSetupRomAddr)
   val sSofDev = rSofCounter(10 downto 4).asBits
   val sSofEp = rSofCounter(4 downto 0).asBits
 
+  val reverseTokenDevI = tokenDevI(0).asBits ##
+                         tokenDevI(1).asBits ##
+                         tokenDevI(2).asBits ##
+                         tokenDevI(3).asBits ##
+                         tokenDevI(4).asBits ##
+                         tokenDevI(5).asBits ##
+                         tokenDevI(6).asBits
+
+  val resevereTokenEpI = tokenEpI(0).asBits ##
+                         tokenEpI(1).asBits ##
+                         tokenEpI(2).asBits ##
+                         tokenEpI(3).asBits
+      
   if (C_usb_speed == 1) {
     sRxd := io.usbDif
     sRxdp := io.usbDp
@@ -467,9 +490,118 @@ class UsbHostHid(
             dataLenI := 0
           }
 
+          when (rCtrlIn) {
+            when (rStoredResponse === 0x48 || rStoredResponse === 0xc3) {
+              rAdvanceData := True
+
+              when (rBytesRemaining(15 downto 3) === 0) {
+                rCtrlIn := False
+
+                when (!rDataStatus) {
+                  rState := C_STATE_SETUP
+                }
+              } otherwise {
+                rAdvanceData := True
+                rPacketCounter := rPacketCounter + 1
+                startI := True
+              }
+            } otherwise {
+              rPacketCounter := rPacketCounter + 1
+              startI := True
+            } 
+          } otherwise {
+            when (rStoredResponse === 0xd2) {
+              rAdvanceData := True
+
+              when (rDataStatus) {
+                rState := C_STATE_SETUP
+              } otherwise {
+                when (rBytesRemaining === 0) {
+                  rCtrlIn := True
+                }
+              }
+
+            } otherwise {
+              rPacketCounter := rPacketCounter + 1
+              startI := True
+            }
+          }
+        }
+      } otherwise {
+        startI := False
+      }
+      
+      when (rAdvanceData) {
+        when (rBytesRemaining =/= 0) {
+          when (rBytesRemaining(15 downto 3) =/= 0) {
+            rBytesRemaining(16 downto 3) := rBytesRemaining(15 downto 3) + 1
+          } otherwise {
+            rBytesRemaining(2 downto 0) := 0
+          }
+          dataIdxI := ~dataIdxI
+        } otherwise {
+          when (rCtrlIn) {
+            dataIdxI := True
+          }
         }
       }
     }
   }
+
+  val usbhSie = new UsbhSie
+  usbhSie.io.startI := startI
+  usbhSie.io.inTransferI := inTransferI
+  usbhSie.io.sofTransferI := sofTransferI
+  usbhSie.io.respExpectedI := respExpectedI
+  usbhSie.io.tokenPidI := tokenPidI
+  usbhSie.io.tokenDevI := tokenDevI
+  usbhSie.io.tokenEpI := tokenEpI
+  usbhSie.io.dataLenI := dataLenI
+  usbhSie.io.dataIdxI := dataIdxI
+  usbhSie.io.txDataI := txDataI
+  usbhSie.io.utmiTxReadyI := sTXREADY
+  usbhSie.io.utmiDataI := sDATAIN
+  usbhSie.io.utmiRxValidI := sRXVALID
+  usbhSie.io.utmiRxActiveI := sRXACTIVE
+
+  txPopO := usbhSie.io.txPopO
+  rxDataO := usbhSie.io.rxDataO
+  rxPushO := usbhSie.io.rxPushO
+  txDoneO := usbhSie.io.txDoneO
+  rxDoneO := usbhSie.io.rxDoneO
+  crcErrO := usbhSie.io.crcErrO
+  timeoutO := usbhSie.io.timeoutO
+  responseO := usbhSie.io.responseO
+  rxCountO := usbhSie.io.rxCountO
+  idleO := usbhSie.io.idleO
+  sLINECTRL := usbhSie.io.utmiLineCtrlO
+  sDATAOUT := usbhSie.io.utmiDataO
+  sTXVALID := usbhSie.io.utmiTxValidO
+
+  rRxCount := rxCountO
+
+  when (rxPushO) {
+    rReportBuf(rRxCount) := rxDataO
+  }
+
+  rRxDone := rxDoneO
+
+  when (rRxDone && !rxDoneO) {
+    rCrcErr := False
+  } elsewhen (crcErrO) {
+    rCrcErr := True
+  }
+
+  rHidValid := (rRxDone && !rxDoneO && !rCrcErr && !timeoutO && 
+                rState === C_STATE_REPORT && rRxCount =/= 0)
+
+  for (i <- 0 to C_report_length - 1) {
+    io.hidReport(i*8+7 downto i*8) := rReportBuf(i)
+  }
+
+  io.hidValid := rHidValid
+  io.rxCount := rxCountO
+  io.rxDone := rxDoneO
+
 }
 
