@@ -28,17 +28,17 @@ class UsbTxPhy extends Component {
   val EOP5_STATE = B"1101"
 
   val rHold = Reg(Bits(8 bits)) init 0x00
-  val rLdData = Reg(Bool)
+  val rLdData = Reg(Bool) init False
   val rLineCtrlI = Reg(Bool) init False
-  val rLongI = Reg(Bool)
-  val rBusResetI = Reg(Bool)
+  val rLongI = Reg(Bool) init False
+  val rBusResetI = Reg(Bool) init False
   val rBitCnt = Reg(UInt(16 bits)) init 0
   val rDataXmit = Reg(Bool) init False
   val rHoldD = Reg(Bits(8 bits)) init 0x00
   val rOneCnt = Reg(UInt(3 bits)) init 0
   val rSdBsO = Reg(Bool) init False
   val rSdNrziO = Reg(Bool) init True
-  val rSdRawO = Reg(Bool)
+  val rSdRawO = Reg(Bool) init False
   val rSftDone = Reg(Bool) init False
   val rSftDoneR = Reg(Bool) init False
   val rState = Reg(Bits(4 bits)) init IDLE_STATE
@@ -56,15 +56,17 @@ class UsbTxPhy extends Component {
   val appendEop = (rState(3 downto 2) === B"11")
   val stuff = (rOneCnt === U"110")
 
-  val ldDataD = rState === SOP_STATE || (rState === DATA_STATE && rDataXmit)
+  val sftDoneE = rSftDone && !rSftDoneR
+  val ldDataD = (rState === SOP_STATE || (rState === DATA_STATE && rDataXmit)) ? sftDoneE | False
   val ldSopD = (rState === IDLE_STATE) ? io.txValidI | False
   val seState = appendEop || (rState =/= WAIT_STATE && rLineCtrlI && rLongI && rBusResetI)
-  val sftDoneE = rSftDone && rSftDoneR
   val sLong = rState === WAIT_STATE || !rLongI
 
+  // Misc logic
   rTxReady := (ldDataD || (rLineCtrlI && anyEopState)) && io.txValidI
   rLdData := ldDataD
 
+  // trasmit in progess
   when (ldSopD) {
     rTxIp := True
   } elsewhen (appendEop) {
@@ -81,36 +83,60 @@ class UsbTxPhy extends Component {
     rDataXmit := False
   }
 
+  // Shift register
   when (!rTxIpSync) {
     rBitCnt := 0
-  } elsewhen (io.fsCe && stuff) {
+  } elsewhen (io.fsCe && !stuff) {
     rBitCnt := rBitCnt + 1
   }
 
   when (!rTxIpSync) {
     rSdRawO := False
   } otherwise {
-    rSdRawO := rHold(rBitCnt(2 downto 0))
+    rSdRawO := rHoldD(rBitCnt(2 downto 0))
   }
 
-  when ((rBitCnt.msb === (rLineCtrlI && rLongI)) && rBitCnt(2 downto 0) === U"111") {
+  when ((rBitCnt.msb === (rLineCtrlI & rLongI)) && rBitCnt(2 downto 0) === U"111") {
     rSftDone := !stuff
   } otherwise {
     rSftDone := False
   }
 
+  rSftDoneR := rSftDone
+
+  // Output data hold register
   when (ldSopD) {
     rHold := 0x80
   } elsewhen (rLdData) {
     rHold := io.dataOutI
   }
 
+  rHoldD := rHold
+
+  // Bit stuffer
   when (!rTxIpSync) {
     rOneCnt := 0
-  } elsewhen (!rSdRawO || stuff) {
-    rOneCnt := rOneCnt + 1
+  }  elsewhen (io.fsCe) {
+    when (!rSdRawO || stuff) {
+      rOneCnt := 0
+    } otherwise {
+      rOneCnt := rOneCnt + 1
+    }
   }
 
+  when (io.fsCe) {
+    when (!rTxIpSync) {
+      rSdBsO := False
+    } otherwise {
+      when (stuff) {
+        rSdBsO := False
+      } otherwise {
+        rSdBsO := rSdRawO
+      }
+    }
+  }
+
+  // RRZI encoder
   when (!rTxIpSync || !rTxoeR1 || rLineCtrlI) {
     when (rLineCtrlI) {
       rSdNrziO := sLong
@@ -125,21 +151,15 @@ class UsbTxPhy extends Component {
     }
   }
 
+  // Output enable logic
   when (io.fsCe) {
-    when (!rTxIpSync) {
-      rSdBsO := False
-    } otherwise {
-      when (stuff) {
-        rSdBsO := False
-      } otherwise {
-        rSdBsO := rSdRawO
-      }
-    }
-    
     rTxoeR1 := rTxIpSync
     rTxoeR2 := rTxoeR1
     rTxoe := !(rTxoeR1 || rTxoeR2)
-    
+  }
+
+  // Ouput registers
+  when (io.fsCe) {
     when (io.phyMode) {
       rTxDp := !seState && rSdNrziO
       rTxDn := !seState && !rSdNrziO
@@ -149,9 +169,7 @@ class UsbTxPhy extends Component {
     }
   }
 
-  rHoldD := rHold
-  rSftDoneR := rSftDone
-
+  // Tx state machine
   when (!anyEopState) {
     switch (rState) {
       is(IDLE_STATE) {
@@ -168,7 +186,7 @@ class UsbTxPhy extends Component {
         }
       }
       is(DATA_STATE) {
-        when (rDataXmit && sftDoneE) {
+        when (!rDataXmit && sftDoneE) {
           when (rOneCnt === U"101" && rHoldD(7)) {
             rState := EOP0_STATE
           } otherwise {
@@ -193,6 +211,7 @@ class UsbTxPhy extends Component {
     }
   }
 
+  // Output assignments
   io.txReadyO := rTxReady
   io.txdp := rTxDp
   io.txdn := rTxDn
