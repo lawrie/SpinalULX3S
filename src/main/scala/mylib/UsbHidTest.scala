@@ -22,7 +22,6 @@ class UsbHidTest extends Component {
   val coreArea = new ClockingArea(coreClockDomain) {
     val C_report_length = 20
 
-    val sReport = Bits(C_report_length * 8 bits)
     val sValid = Bool
 
     val usbHostHid = new UsbHostHid
@@ -33,7 +32,8 @@ class UsbHidTest extends Component {
     io.usb_fpga_pu_dp := False
     io.usb_fpga_pu_dn := False
 
-    io.led := 0
+    //io.led := usbHostHid.io.hidReport(7 downto 0)
+    io.led := usbHostHid.io.led
   }
 }
 

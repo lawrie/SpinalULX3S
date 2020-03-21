@@ -606,5 +606,7 @@ class UsbHostHid(
   io.rxCount := rxCountO
   io.rxDone := rxDoneO
 
+  io.led := B"0" ## rResetPending.asBits ## rTxOverDebug.asBits ## rSetupRomAddrAcked(3).asBits ##
+            sLINESTATE ## rState
 }
 

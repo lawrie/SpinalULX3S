@@ -27,29 +27,30 @@ class UsbTxPhy extends Component {
   val EOP4_STATE = B"1100"
   val EOP5_STATE = B"1101"
 
-  val rTxReady = Reg(Bool) init False
-  val rLineCtrlI = Reg(Bool) init False
-  val rLdData = Reg(Bool)
-  val rTxIp = Reg(Bool) init False
-  val rTxIpSync = Reg(Bool) init False
-  val rDataXmit = Reg(Bool) init False
-  val rBitCnt = Reg(UInt(16 bits)) init 0
-  val rOneCnt = Reg(UInt(3 bits)) init 0
   val rHold = Reg(Bits(8 bits)) init 0x00
+  val rLdData = Reg(Bool)
+  val rLineCtrlI = Reg(Bool) init False
+  val rLongI = Reg(Bool)
+  val rBusResetI = Reg(Bool)
+  val rBitCnt = Reg(UInt(16 bits)) init 0
+  val rDataXmit = Reg(Bool) init False
   val rHoldD = Reg(Bits(8 bits)) init 0x00
+  val rOneCnt = Reg(UInt(3 bits)) init 0
+  val rSdBsO = Reg(Bool) init False
+  val rSdNrziO = Reg(Bool) init True
   val rSdRawO = Reg(Bool)
   val rSftDone = Reg(Bool) init False
   val rSftDoneR = Reg(Bool) init False
-  val rLongI = Reg(Bool)
-  val rSdBsO = Reg(Bool) init False
-  val rSdNrziO = Reg(Bool) init True
-  val rTxoe = Reg(Bool) init True
+  val rState = Reg(Bits(4 bits)) init IDLE_STATE
+  val rTxIp = Reg(Bool) init False
+  val rTxIpSync = Reg(Bool) init False
   val rTxoeR1 = Reg(Bool) init False
   val rTxoeR2 = Reg(Bool) init False
+  
   val rTxDp = Reg(Bool) init True
   val rTxDn = Reg(Bool) init False
-  val rState = Reg(Bits(4 bits)) init IDLE_STATE
-  val rBusResetI = Reg(Bool)
+  val rTxoe = Reg(Bool) init True
+  val rTxReady = Reg(Bool) init False
 
   val anyEopState = rState(3)
   val appendEop = (rState(3 downto 2) === B"11")
