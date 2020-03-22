@@ -51,10 +51,6 @@ class UsbhSie extends Component {
   val PID_NAK          = B(0x5A, 8 bits)
   val PID_STALL        = B(0x1E, 8 bits)
 
-  val RX_TIME_ZERO     = U"000"
-  val RX_TIME_INC      = U"001"
-  val RX_TIME_READY    = U"111"  // 2-bit times (x5 CLKs @ 60MHz, x4 CLKs @ 48MHz)
-
   // States
   val STATE_IDLE       = B"0000"
   val STATE_RX_DATA    = B"0001"
@@ -69,6 +65,10 @@ class UsbhSie extends Component {
   val STATE_TX_WAIT    = B"1010"
   val STATE_RX_WAIT    = B"1011"
   val STATE_TX_IFS     = B"1100"
+
+  val RX_TIME_ZERO     = U"000"
+  val RX_TIME_INC      = U"001"
+  val RX_TIME_READY    = U"111"  // 2-bit times (x5 CLKs @ 60MHz, x4 CLKs @ 48MHz)
 
   // Registers
   val rStartAckQ = Reg(Bool) init False
@@ -94,29 +94,33 @@ class UsbhSie extends Component {
   val rDataValidQ = Reg(Bits(4 bits)) init 0
   val rRxActiveQ = Reg(Bits(4 bits)) init 0
   val rDataCrcQ = Reg(Bits(2 bits)) init 0
-  val rUtmiTxValidR = Reg(Bool)
-  val rUtmiDataR = Reg(Bits(8 bits))
+  val rUtmiTxValidR = Reg(Bool) init False
+  val rUtmiDataR = Reg(Bits(8 bits)) init 0
 
   // Wires
-  val crc5OutW = Bits(5 bits)
-
-  val rxDataW = rDataBufferQ(7 downto 0)
-  val crcDataInW = (rStateQ === STATE_RX_DATA) ? rxDataW | io.txDataI
-  val dataReadyW = rDataValidQ(0)
-  val crcByteW = rDataCrcQ(0)
-  val rxActiveW = rRxActiveQ(0)
-  val crc5NextW = crc5OutW ^ 0x1f
   val autorespThreshW = rSendAckQ && rRxTimeEnQ && (rRxTimeQ === RX_TIME_READY)
   val rxRespTimeoutW =  (rLastTxTimeQ >= RX_TIMEOUT) && rWaitRespQ
   val txIfsReadyW = rLastTxTimeQ > TX_IFS
+  val statusResponseDataW = (rStatusResponseQ === PID_DATA0 || rStatusResponseQ === PID_DATA1)
+  val crcErrorW = rCrcSumQ =/= 0xb001
+
+  val rxDataW = rDataBufferQ(7 downto 0)
+  val dataReadyW = rDataValidQ(0)
+  val crcByteW = rDataCrcQ(0)
+  val rxActiveW = rRxActiveQ(0)
+
+  val crcDataInW = (rStateQ === STATE_RX_DATA) ? rxDataW | io.txDataI
+  val crc5OutW = Bits(5 bits)
+  val crc5NextW = crc5OutW ^ 0x1f
   val shiftEnW = (io.utmiRxValidI && io.utmiRxActiveI) || !io.utmiRxActiveI
-  
-  val crcErrorW = rStateQ === STATE_RX_DATA &&
-                  !rxActiveW &&
-                  !rInTransferQ &&
-                  rStatusResponseQ =/= PID_DATA0 &&
-                  rStatusResponseQ =/= PID_DATA1 &&
-                  rCrcSumQ =/= 0xb001
+ 
+  // Complex case:
+  //val crcErrorW = rStateQ === STATE_RX_DATA &&
+  //                !rxActiveW &&
+  //                !rInTransferQ &&
+  //                rStatusResponseQ =/= PID_DATA0 &&
+  //                rStatusResponseQ =/= PID_DATA1 &&
+  //                rCrcSumQ =/= 0xb001
 
   val nextStateR = Bits(4 bits)
 
@@ -203,9 +207,9 @@ class UsbhSie extends Component {
     }
     is(STATE_RX_DATA) {
       when (!rxActiveW) {
-        when (rSendAckQ && crcErrorW) {
+        when (crcErrorW && rSendAckQ && statusResponseDataW) {
           nextStateR := STATE_IDLE
-        } elsewhen (rSendAckQ && (rStatusResponseQ === PID_DATA0 || rStatusResponseQ === PID_DATA1)) {
+        } elsewhen (rSendAckQ && statusResponseDataW) {
           nextStateR := STATE_TX_WAIT
         } otherwise {
           nextStateR := STATE_IDLE
@@ -219,32 +223,40 @@ class UsbhSie extends Component {
     }
   }
 
+  // Update state
   rStateQ := nextStateR
 
+  // Tx token
   when (rStateQ === STATE_IDLE) {
     rTokenQ := io.tokenDevI ## io.tokenEpI ## B"00000"
   } elsewhen (rStateQ === STATE_TX_TOKEN1 && io.utmiTxReadyI) {
     rTokenQ(4 downto 0) := crc5NextW
   }
 
+  // Tx timer
   when (rStateQ === STATE_IDLE || (io.utmiTxValidO && io.utmiTxReadyI)) {
     rLastTxTimeQ := 0
   } elsewhen (rLastTxTimeQ =/= RX_TIMEOUT) {
     rLastTxTimeQ := rLastTxTimeQ + 1
   }
 
+  // Trasmit / Receive counter
   when (rStateQ === STATE_IDLE && io.startI && !io.sofTransferI) {
     rByteCountQ := io.dataLenI
   } elsewhen (rStateQ === STATE_RX_WAIT) {
     rByteCountQ := 0
   } elsewhen ((rStateQ === STATE_TX_PID || rStateQ === STATE_TX_DATA) && io.utmiTxReadyI) {
-    when (rByteCountQ =/= 0) (rByteCountQ := rByteCountQ - 1)
+    when (rByteCountQ =/= 0) {
+      rByteCountQ := rByteCountQ - 1
+    }
   } elsewhen (rStateQ === STATE_RX_DATA && dataReadyW && !crcByteW) {
     rByteCountQ := rByteCountQ + 1
   }
 
+  // Transfer start ack
   rStartAckQ := (rStateQ === STATE_TX_TOKEN1 && io.utmiTxReadyI)
 
+  // Record request details
   when (rStateQ === STATE_IDLE && io.startI) {
     rInTransferQ := io.inTransferI
     rSendAckQ := io.inTransferI && io.respExpectedI
@@ -253,6 +265,7 @@ class UsbhSie extends Component {
     rSendSofQ := io.sofTransferI
   }
 
+  // Response delay timer
   when (rStateQ === STATE_IDLE) {
     rRxTimeQ := RX_TIME_ZERO
     rRxTimeEnQ := False
@@ -263,12 +276,14 @@ class UsbhSie extends Component {
     rRxTimeQ := rRxTimeQ + RX_TIME_INC
   }
 
+  // Response expected
   when (rStateQ === STATE_RX_WAIT && dataReadyW) {
     rWaitRespQ := False
   } elsewhen (rStateQ === STATE_IDLE && io.startI) {
     rWaitRespQ := io.respExpectedI
   }
 
+  // Status
   switch (rStateQ) {
     is(STATE_RX_WAIT) {
       when (dataReadyW) (rStatusResponseQ := rxDataW)
@@ -276,7 +291,7 @@ class UsbhSie extends Component {
       rStatusTxDoneQ := False
     }
     is(STATE_RX_DATA) {
-      rStatusTxDoneQ := !io.utmiRxActiveI
+      rStatusRxDoneQ := !io.utmiRxActiveI
     }
     is(STATE_TX_CRC2) {
       when (io.utmiTxReadyI && !rWaitRespQ) {
@@ -297,17 +312,18 @@ class UsbhSie extends Component {
     }
   }
 
+  // Data delay to strip CRC16 trailing bytes
   when (shiftEnW) {
     rDataBufferQ := io.utmiDataI ## rDataBufferQ(31 downto 8)
     rDataValidQ := (io.utmiRxValidI & io.utmiRxActiveI) ## rDataValidQ(3 downto 1)
+    rDataCrcQ := (!io.utmiRxActiveI).asBits ## rDataCrcQ(1).asBits
   } otherwise {
     rDataValidQ := rDataValidQ(3 downto 1) ## B"0"
   }
 
-  rDataCrcQ := (!io.utmiRxActiveI).asBits ## rDataCrcQ(1).asBits
-
   rRxActiveQ := io.utmiRxActiveI.asBits ## rRxActiveQ(3 downto 1)
 
+  // CRC
   val usbCrc16 = new UsbCrc16
   usbCrc16.io.crc_i :=  rCrcSumQ
   usbCrc16.io.data_i := crcDataInW
@@ -319,6 +335,7 @@ class UsbhSie extends Component {
   usbCrc5.io.data_i := rTokenQ(15 downto 5)
   crc5OutW := usbCrc5.io.crc_o
 
+  // CRC control / check
   switch (rStateQ) {
     is(STATE_TX_PID) {
       rCrcSumQ := 0xffff
@@ -335,7 +352,7 @@ class UsbhSie extends Component {
       when (dataReadyW) {
         rCrcSumQ := crcOutW
       } elsewhen (!rxActiveW) {
-        rStatusCrcErrQ := crcErrorW
+        rStatusCrcErrQ := crcErrorW && statusResponseDataW
       }
     }
     is(STATE_IDLE) {
@@ -395,7 +412,7 @@ class UsbhSie extends Component {
   io.utmiLineCtrlO := rUtmiLineCtrl
 
   io.rxDataO := rxDataW
-  io.rxPushO := (rStateQ === STATE_IDLE && rStateQ === STATE_RX_WAIT) && dataReadyW && !crcByteW
+  io.rxPushO := (rStateQ =/= STATE_IDLE && rStateQ =/= STATE_RX_WAIT) && dataReadyW && !crcByteW
 
   io.rxCountO := rByteCountQ
   io.idleO := (rStateQ === STATE_IDLE)
