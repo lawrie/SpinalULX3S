@@ -49,43 +49,43 @@ class UsbHostHid(
   val rSetupRomAddrAcked = Reg(UInt(8 bits)) init 0
 
   val rSetupByteCounter = Reg(UInt(3 bits)) init 0
-  val rCtrlIn = Reg(Bool)
+  val rCtrlIn = Reg(Bool) init False
   val rDataStatus = Reg(Bool) init False
-  val rPacketCounter = Reg(UInt(16 bits))
+  val rPacketCounter = Reg(UInt(16 bits)) init 0
   val rState = Reg(Bits(2 bits)) init 0
-  val rRetry = Reg(UInt(C_setup_retry+1 bits))
-  val rSlow = Reg(UInt(18 bits))
-  val rResetPending = Reg(Bool)
+  val rRetry = Reg(UInt(C_setup_retry+1 bits)) init 0
+  val rSlow = Reg(UInt(18 bits)) init 0
+  val rResetPending = Reg(Bool) init True
   val rResetAccepted = Reg(Bool) init False
   val startI = Reg(Bool) init False
   val rTimeout = Reg(Bool) init False
-  val inTransferI = Reg(Bool)
-  val sofTransferI = Reg(Bool)
-  val respExpectedI = Reg(Bool)
+  val inTransferI = Reg(Bool) init False
+  val sofTransferI = Reg(Bool) init False
+  val respExpectedI = Reg(Bool) init False
   val tokenPidI = Reg(Bits(8 bits)) init 0
   val tokenDevI = Reg(Bits(7 bits)) init 0
   val tokenEpI = Reg(Bits(4 bits)) init 0
   val dataLenI = Reg(UInt(16 bits)) init 0
   val dataIdxI = Reg(Bool) init False
 
-  val rSetAddressFound = Reg(Bool)
-  val rDevAddressRequested = Reg(Bits(7 bits))
-  val rDevAddressConfirmed = Reg(Bits(7 bits))
-  val rStoredResponse = Reg(Bits(8 bits))
+  val rSetAddressFound = Reg(Bool) init False
+  val rDevAddressRequested = Reg(Bits(7 bits)) init 0
+  val rDevAddressConfirmed = Reg(Bits(7 bits)) init 0
+  val rStoredResponse = Reg(Bits(8 bits)) init 0
 
-  val rWLength = Reg(UInt(16 bits))
-  val rBytesRemaining = Reg(UInt(16 bits))
+  val rWLength = Reg(UInt(16 bits)) init 0
+  val rBytesRemaining = Reg(UInt(16 bits)) init 0
   val rAdvanceData = Reg(Bool) init False
-  val rFirstByte0Found = Reg(Bool)
+  val rFirstByte0Found = Reg(Bool) init False
 
   val rTxOverDebug = Reg(Bool) init True
-  val rSofCounter = Reg(UInt(11 bits))
+  val rSofCounter = Reg(UInt(11 bits)) init 0
   
-  val rReportBuf = Reg(Vec(Bits(8 bits), C_report_length))
-  val rRxCount = Reg(UInt(16 bits))
-  val rRxDone = Reg(Bool)
-  val rCrcErr = Reg(Bool)
-  val rHidValid = Reg(Bool)
+  val rReportBuf = Mem(Bits(8 bits), C_report_length)
+  val rRxCount = Reg(UInt(16 bits)) init 0
+  val rRxDone = Reg(Bool) init False
+  val rCrcErr = Reg(Bool) init False
+  val rHidValid = Reg(Bool) init False
   
   val C_setup_rom = Mem(Bits(8 bits), wordCount = C_setup_rom_len)
   C_setup_rom.initialContent = Tools.readmemh(C_setup_rom_file)
@@ -126,7 +126,7 @@ class UsbHostHid(
                          tokenDevI(5).asBits ##
                          tokenDevI(6).asBits
 
-  val resevereTokenEpI = tokenEpI(0).asBits ##
+  val reverseTokenEpI = tokenEpI(0).asBits ##
                          tokenEpI(1).asBits ##
                          tokenEpI(2).asBits ##
                          tokenEpI(3).asBits
@@ -206,8 +206,8 @@ class UsbHostHid(
             rSetupRomAddr := rSetupRomAddr + 1
             rSetupByteCounter := rSetupByteCounter + 1
           }
-          rStoredResponse := 0
         }
+        rStoredResponse := 0
       }
       is(C_STATE_REPORT) {
         when (sTransmissionOver) {
@@ -216,7 +216,7 @@ class UsbHostHid(
               rRetry := rRetry + 1
             }
           } otherwise {
-            when (txDoneO) {
+            when (rxDoneO) {
               rRetry := 0
             }
           }
@@ -237,11 +237,13 @@ class UsbHostHid(
             }
           } otherwise {
             when (timeoutO && !rTimeout) {
-              rRetry := rRetry + 1
+              when (!rRetry(C_setup_retry)) {
+                rRetry := rRetry + 1
+              }
             } otherwise {
               when (rxDoneO) {
                 rStoredResponse := responseO
-                when (responseO === 0x48) {
+                when (responseO === 0x4b) {
                   rRetry := 0
                   rDevAddressConfirmed := rDevAddressRequested
                 } otherwise {
@@ -343,6 +345,7 @@ class UsbHostHid(
               tokenDevI := sSofDev
               tokenEpI := sSofEp
               dataLenI := 0
+              rSofCounter := rSofCounter + 1
             }
             respExpectedI := False
             startI := True
@@ -485,7 +488,7 @@ class UsbHostHid(
 
           when (rBytesRemaining =/= 0) {
             when (rBytesRemaining(15 downto 3) =/= 0) {
-              dataLenI := 0
+              dataLenI := 8
             } otherwise {
               dataLenI := U(0, 13 bits) @@ rBytesRemaining(2 downto 0)
             }
@@ -494,7 +497,7 @@ class UsbHostHid(
           }
 
           when (rCtrlIn) {
-            when (rStoredResponse === B(0x48, 8 bits) || rStoredResponse === B(0xc3, 8 bits)) {
+            when (rStoredResponse === B(0x4B, 8 bits) || rStoredResponse === B(0xc3, 8 bits)) {
               rAdvanceData := True
 
               when (rBytesRemaining(15 downto 3) === 0) {
@@ -537,7 +540,7 @@ class UsbHostHid(
       when (rAdvanceData) {
         when (rBytesRemaining =/= 0) {
           when (rBytesRemaining(15 downto 3) =/= 0) {
-            rBytesRemaining(15 downto 3) := rBytesRemaining(15 downto 3) + 1
+            rBytesRemaining(15 downto 3) := rBytesRemaining(15 downto 3) - 1
           } otherwise {
             rBytesRemaining(2 downto 0) := 0
           }
@@ -557,8 +560,8 @@ class UsbHostHid(
   usbhSie.io.sofTransferI := sofTransferI
   usbhSie.io.respExpectedI := respExpectedI
   usbhSie.io.tokenPidI := tokenPidI
-  usbhSie.io.tokenDevI := tokenDevI
-  usbhSie.io.tokenEpI := tokenEpI
+  usbhSie.io.tokenDevI := reverseTokenDevI
+  usbhSie.io.tokenEpI := reverseTokenEpI
   usbhSie.io.dataLenI := dataLenI
   usbhSie.io.dataIdxI := dataIdxI
   usbhSie.io.txDataI := txDataI
@@ -591,22 +594,24 @@ class UsbHostHid(
 
   when (rRxDone && !rxDoneO) {
     rCrcErr := False
-  } elsewhen (crcErrO) {
-    rCrcErr := True
+  } otherwise {
+    when (crcErrO) {
+      rCrcErr := True
+    }
   }
 
   rHidValid := (rRxDone && !rxDoneO && !rCrcErr && !timeoutO && 
                 rState === C_STATE_REPORT && sReportLengthOK)
 
   for (i <- 0 to C_report_length - 1) {
-    io.hidReport(i*8+7 downto i*8) := rReportBuf(i)
+    io.hidReport(i*8+7 downto i*8) := rReportBuf(U(i, 5 bits))
   }
 
   io.hidValid := rHidValid
   io.rxCount := rxCountO
   io.rxDone := rxDoneO
 
-  io.led := B"0" ## rResetPending.asBits ## rTxOverDebug.asBits ## rSetupRomAddrAcked(3).asBits ##
-            sLINESTATE ## rState
+  io.led := B"0" ## rResetPending.asBits ## rTxOverDebug.asBits ## 
+            rSetupRomAddrAcked(3).asBits ## sLINESTATE ## rState
 }
 

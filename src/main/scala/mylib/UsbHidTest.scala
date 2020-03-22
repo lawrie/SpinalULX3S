@@ -33,7 +33,8 @@ class UsbHidTest extends Component {
     io.usb_fpga_pu_dn := False
 
     //io.led := usbHostHid.io.hidReport(7 downto 0)
-    io.led := usbHostHid.io.led
+    //io.led := usbHostHid.io.led
+    io.led := usbHostHid.io.hidReport(23 downto 16)
   }
 }
 
