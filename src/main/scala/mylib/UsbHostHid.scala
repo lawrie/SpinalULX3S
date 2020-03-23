@@ -8,7 +8,7 @@ class UsbHostHid(
   C_setup_interval : Int = 17,
   C_report_interval : Int = 16,
   C_report_endpoint : Int = 1,
-  C_report_length : Int = 20,
+  C_report_length : Int = 10,
   C_report_length_strict : Boolean = false,
   C_keepalive_setup : Boolean = true,
   C_keepalive_status : Boolean = true,
@@ -338,9 +338,9 @@ class UsbHostHid(
             sofTransferI := True
             inTransferI := Bool(C_keepalive_type)
 
-            when (Bool(C_keepalive_type)) {
+            if (C_keepalive_type) {
               tokenPidI(1 downto 0) := B"00"
-            } otherwise {
+            } else {
               tokenPidI := 0xa5
               tokenDevI := sSofDev
               tokenEpI := sSofEp
@@ -401,9 +401,9 @@ class UsbHostHid(
             sofTransferI := True
             inTransferI := Bool(C_keepalive_type)
 
-            when (Bool(C_keepalive_type)) {
+            if (C_keepalive_type) {
               tokenPidI(1 downto 0) := B"00"
-            } otherwise {
+            } else {
               tokenPidI := 0xa5
               tokenDevI := sSofDev
               tokenEpI := sSofEp
@@ -421,7 +421,7 @@ class UsbHostHid(
           inTransferI := True
           tokenPidI := 0x69
 
-          when (!Bool(C_keepalive_type)) {
+          if (!C_keepalive_type) {
             tokenDevI := rDevAddressConfirmed
           }
 
@@ -453,9 +453,9 @@ class UsbHostHid(
             sofTransferI := True
             inTransferI := Bool(C_keepalive_type)
 
-            when (Bool(C_keepalive_type)) {
+            if (C_keepalive_type) {
               tokenPidI(1 downto 0) := B"00"
-            } otherwise {
+            } else {
               tokenPidI := 0xa5
               tokenDevI := sSofDev
               tokenEpI := sSofEp
@@ -479,7 +479,7 @@ class UsbHostHid(
             tokenPidI := 0xe1
           }
 
-          when (!Bool(C_keepalive_type)) {
+          if (!C_keepalive_type) {
             tokenDevI := rDevAddressConfirmed
           }
 
@@ -604,7 +604,7 @@ class UsbHostHid(
                 rState === C_STATE_REPORT && sReportLengthOK)
 
   for (i <- 0 to C_report_length - 1) {
-    io.hidReport(i*8+7 downto i*8) := rReportBuf(U(i, 5 bits))
+    io.hidReport(i*8+7 downto i*8) := rReportBuf(U(i, log2Up(C_report_length) bits))
   }
 
   io.hidValid := rHidValid

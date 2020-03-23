@@ -39,11 +39,6 @@ class UsbhSie extends Component {
   val RX_TIMEOUT       = 511 // 10.6uS @ 48MHz, 85us @ 6MHz
   val TX_IFS           = 7   // 2 FS bit times (x5 CLKs @ 60MHz, x4 CLKs @ 48MHz)
 
-  val PID_OUT          = 0xE1
-  val PID_IN           = 0x69
-  val PID_SOF          = 0xA5
-  val PID_SETUP        = 0x2D
-
   val PID_DATA0        = B(0xC3, 8 bits)
   val PID_DATA1        = B(0x4B, 8 bits)
 
