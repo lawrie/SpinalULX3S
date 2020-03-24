@@ -444,14 +444,8 @@ class UsbHostHid(
           rSlow := 0
           sofTransferI := False
           inTransferI := rCtrlIn
-          when (rCtrlIn) {
-            tokenPidI := 0x69
-          } otherwise {
-            tokenPidI := 0xe1
-          }
-          if (!C_keepalive_type) {
-            tokenDevI := rDevAddressConfirmed
-          }
+          tokenPidI := rCtrlIn  ? B(0x69, 8 bits) | B(0xe1, 8 bits)
+          if (!C_keepalive_type) (tokenDevI := rDevAddressConfirmed)
           tokenEpI := 0
           respExpectedI := True
           when (rBytesRemaining =/= 0) {
