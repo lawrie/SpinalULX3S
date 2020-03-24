@@ -3,6 +3,8 @@ package mylib
 import spinal.core._
 import spinal.lib._
 
+// Uses the USB Serial Interface Engine (SIE) to set up a Hid device
+// And read hid reports from it
 class UsbHostHid(
   C_setup_retry : Int = 4,
   C_setup_interval : Int = 17,
@@ -127,29 +129,28 @@ class UsbHostHid(
                          tokenDevI(6).asBits
 
   val reverseTokenEpI = tokenEpI(0).asBits ##
-                         tokenEpI(1).asBits ##
-                         tokenEpI(2).asBits ##
-                         tokenEpI(3).asBits
+                        tokenEpI(1).asBits ##
+                        tokenEpI(2).asBits ##
+                        tokenEpI(3).asBits
 
-  val sReportLengthOK = Bool(C_report_length_strict) ? (rRxCount === C_report_length) | (rRxCount =/= 0)
+  val sReportLengthOK = Bool(C_report_length_strict) ? 
+                         (rRxCount === C_report_length) | 
+                         (rRxCount =/= 0)
 
   val sSofKeepalive = rSlow(C_keepalive_phase_bits-1 downto 0) === C_keepalive_phase
+  val sTimeout = timeoutO && !rTimeout
 
   if (C_usb_speed == 1) {
     sRxd := io.usbDif
     sRxdp := io.usbDp
     sRxdn := io.usbDn
-
     when (!sTxoe) (io.usbDp := sTxdp)
-
     when (!sTxoe) (io.usbDn := sTxdn)
   } else {
     sRxd := ~io.usbDif
     sRxdp := io.usbDn
     sRxdn := io.usbDp
-
     when (!sTxoe) (io.usbDp := sTxdn)
-
     when (!sTxoe) (io.usbDn := sTxdp)
   }
 
@@ -176,6 +177,13 @@ class UsbHostHid(
 
   rTimeout := timeoutO
 
+  def setupRetry = {
+    when (!rRetry(C_setup_retry)) {
+      rRetry := rRetry + 1
+    }
+  }
+
+  // Setup rom address advance, retry logic and adrress acceptance
   when (rResetAccepted) {
     rSetupRomAddr := 0
     rSetupRomAddrAcked := 0
@@ -198,9 +206,7 @@ class UsbHostHid(
               rRetry := 0
             } otherwise {
               rSetupRomAddr := rSetupRomAddrAcked
-              when (!rRetry(C_setup_retry)) {
-                rRetry := rRetry + 1
-              }
+              setupRetry
             }
           }
         } otherwise {
@@ -213,10 +219,8 @@ class UsbHostHid(
       }
       is(C_STATE_REPORT) {
         when (sTransmissionOver) {
-          when (timeoutO && !rTimeout) {
-            when (!rRetry(C_setup_retry)) {
-              rRetry := rRetry + 1
-            }
+          when (sTimeout) {
+            setupRetry
           } otherwise {
             when (rxDoneO) {
               rRetry := 0
@@ -233,15 +237,11 @@ class UsbHostHid(
               rRetry := 0
             } otherwise {
               rSetupRomAddr := rSetupRomAddrAcked
-              when (!rRetry(C_setup_retry)) {
-                rRetry := rRetry + 1
-              }
+              setupRetry
             }
           } otherwise {
-            when (timeoutO && !rTimeout) {
-              when (!rRetry(C_setup_retry)) {
-                rRetry := rRetry + 1
-              }
+            when (sTimeout) {
+              setupRetry
             } otherwise {
               when (rxDoneO) {
                 rStoredResponse := responseO
@@ -263,6 +263,7 @@ class UsbHostHid(
     }
   }
 
+  // Process 8-byte setup packet
   switch (rState) {
     is(C_STATE_DETACHED) {
       rDevAddressRequested := 0
@@ -299,8 +300,6 @@ class UsbHostHid(
     }
   }
 
-  rAdvanceData := False
-
   def startSof = {
     startI := True
     sofTransferI := True
@@ -309,7 +308,6 @@ class UsbHostHid(
 
   def sofKeepalive = {
     inTransferI := Bool(C_keepalive_type)
-
     if (C_keepalive_type) {
       tokenPidI(1 downto 0) := B"00"
     } else {
@@ -321,10 +319,12 @@ class UsbHostHid(
     }
   }
 
+  rAdvanceData := False
+
+  // State machine
   switch (rState) {
     is(C_STATE_DETACHED) {
       rResetAccepted := False
-
       when (sLINESTATE === B"01") {
         when (!rSlow.msb) {
           rSlow := rSlow + 1
@@ -348,12 +348,10 @@ class UsbHostHid(
       when (idleO) {
         when (!rSlow(C_setup_interval)) {
           rSlow := rSlow + 1
-
           when (rRetry(C_setup_retry)) {
             rResetAccepted := True
             rState := C_STATE_DETACHED
           }
-
           when (sSofKeepalive && Bool(C_keepalive_setup)) {
             startSof
             sofKeepalive
@@ -366,7 +364,6 @@ class UsbHostHid(
           tokenDevI := rDevAddressConfirmed
           tokenEpI := 0
           respExpectedI := True
-
           when (rSetupRomAddr === C_setup_rom_len) {
             dataLenI := 0
             startI := False
@@ -375,17 +372,14 @@ class UsbHostHid(
             inTransferI := False
             tokenPidI := 0x2d
             dataLenI := 8
-
             when (rSetAddressFound || rCtrlIn || rWLength =/= 0) {
               rBytesRemaining := rWLength
-
               when (rSetAddressFound) {
                 rCtrlIn := True
                 rDataStatus := False
               } otherwise {
                 rDataStatus := C_datastatus_enable
               }
-
               dataIdxI := True
               rState := C_STATE_DATA
             } otherwise {
@@ -415,16 +409,13 @@ class UsbHostHid(
           sofTransferI := False
           inTransferI := True
           tokenPidI := 0x69
-
           if (!C_keepalive_type) {
             tokenDevI := rDevAddressConfirmed
           }
-
           tokenEpI := C_report_endpoint
           dataIdxI := False
           respExpectedI := True
           startI := True
-
           when (rResetPending || sLINESTATE === B"00" || rRetry(C_setup_retry)) {
             rResetAccepted := True
             rState := C_STATE_DETACHED
@@ -435,15 +426,14 @@ class UsbHostHid(
       }
     }
     default {
+      // C_STATE_DATA
       when (idleO) {
         when (!rSlow(C_setup_interval)) {
           rSlow := rSlow + 1
-
           when (rRetry(C_setup_retry)) {
             rResetAccepted := True
             rState := C_STATE_DETACHED
           }
-
           when (sSofKeepalive && Bool(C_keepalive_status)){
             startSof
             sofKeepalive
@@ -454,20 +444,16 @@ class UsbHostHid(
           rSlow := 0
           sofTransferI := False
           inTransferI := rCtrlIn
-
           when (rCtrlIn) {
             tokenPidI := 0x69
           } otherwise {
             tokenPidI := 0xe1
           }
-
           if (!C_keepalive_type) {
             tokenDevI := rDevAddressConfirmed
           }
-
           tokenEpI := 0
           respExpectedI := True
-
           when (rBytesRemaining =/= 0) {
             when (rBytesRemaining(15 downto 3) =/= 0) {
               dataLenI := 8
@@ -477,14 +463,12 @@ class UsbHostHid(
           } otherwise {
             dataLenI := 0
           }
-
           when (rCtrlIn) {
-            when (rStoredResponse === B(0x4B, 8 bits) || rStoredResponse === B(0xc3, 8 bits)) {
+            when (rStoredResponse === B(0x4B, 8 bits) || 
+                  rStoredResponse === B(0xc3, 8 bits)) {
               rAdvanceData := True
-
               when (rBytesRemaining(15 downto 3) === 0) {
                 rCtrlIn := False
-
                 when (!rDataStatus) {
                   rState := C_STATE_SETUP
                 }
@@ -500,7 +484,6 @@ class UsbHostHid(
           } otherwise {
             when (rStoredResponse === 0xd2) {
               rAdvanceData := True
-
               when (rDataStatus) {
                 rState := C_STATE_SETUP
               } otherwise {
@@ -508,7 +491,6 @@ class UsbHostHid(
                   rCtrlIn := True
                 }
               }
-
             } otherwise {
               rPacketCounter := rPacketCounter + 1
               startI := True
@@ -518,7 +500,6 @@ class UsbHostHid(
       } otherwise {
         startI := False
       }
-      
       when (rAdvanceData) {
         when (rBytesRemaining =/= 0) {
           when (rBytesRemaining(15 downto 3) =/= 0) {
