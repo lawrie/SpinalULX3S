@@ -133,6 +133,8 @@ class UsbHostHid(
 
   val sReportLengthOK = Bool(C_report_length_strict) ? (rRxCount === C_report_length) | (rRxCount =/= 0)
 
+  val sSofKeepalive = rSlow(C_keepalive_phase_bits-1 downto 0) === C_keepalive_phase
+
   if (C_usb_speed == 1) {
     sRxd := io.usbDif
     sRxdp := io.usbDp
@@ -299,22 +301,40 @@ class UsbHostHid(
 
   rAdvanceData := False
 
+  def startSof = {
+    startI := True
+    sofTransferI := True
+    respExpectedI := True
+  }
+
+  def sofKeepalive = {
+    inTransferI := Bool(C_keepalive_type)
+
+    if (C_keepalive_type) {
+      tokenPidI(1 downto 0) := B"00"
+    } else {
+      tokenPidI := 0xa5
+      tokenDevI := sSofDev
+      tokenEpI := sSofEp
+      dataLenI := 0
+      rSofCounter := rSofCounter + 1
+    }
+  }
+
   switch (rState) {
     is(C_STATE_DETACHED) {
       rResetAccepted := False
 
       when (sLINESTATE === B"01") {
-        when (!rSlow(17)) {
+        when (!rSlow.msb) {
           rSlow := rSlow + 1
         } otherwise {
           rSlow := 0
-          sofTransferI := True
+          startSof
           inTransferI := True
           tokenPidI(1 downto 0) := B"11"
           tokenDevI := 0
-          respExpectedI := False
           rCtrlIn := False
-          startI := True
           rPacketCounter := 0
           rSofCounter := 0
           rState := C_STATE_SETUP
@@ -334,21 +354,9 @@ class UsbHostHid(
             rState := C_STATE_DETACHED
           }
 
-          when (rSlow(C_keepalive_phase_bits - 1 downto 0) === C_keepalive_phase && Bool(C_keepalive_setup)) {
-            sofTransferI := True
-            inTransferI := Bool(C_keepalive_type)
-
-            if (C_keepalive_type) {
-              tokenPidI(1 downto 0) := B"00"
-            } else {
-              tokenPidI := 0xa5
-              tokenDevI := sSofDev
-              tokenEpI := sSofEp
-              dataLenI := 0
-              rSofCounter := rSofCounter + 1
-            }
-            respExpectedI := False
-            startI := True
+          when (sSofKeepalive && Bool(C_keepalive_setup)) {
+            startSof
+            sofKeepalive
           } otherwise {
             startI := False
           }
@@ -396,22 +404,9 @@ class UsbHostHid(
       when (idleO) {
         when (!rSlow(C_report_interval)) {
           rSlow := rSlow + 1
-
-          when (rSlow(C_keepalive_phase_bits-1 downto 0) === C_keepalive_phase & Bool(C_keepalive_report)) {
-            sofTransferI := True
-            inTransferI := Bool(C_keepalive_type)
-
-            if (C_keepalive_type) {
-              tokenPidI(1 downto 0) := B"00"
-            } else {
-              tokenPidI := 0xa5
-              tokenDevI := sSofDev
-              tokenEpI := sSofEp
-              dataLenI := 0
-              rSofCounter := rSofCounter + 1
-            }
-            respExpectedI := False
-            startI := True
+          when (sSofKeepalive && Bool(C_keepalive_report)) {
+            startSof
+            sofKeepalive
           } otherwise {
             startI := False
           }
@@ -449,22 +444,9 @@ class UsbHostHid(
             rState := C_STATE_DETACHED
           }
 
-          when (rSlow(C_keepalive_phase_bits-1 downto 0) === C_keepalive_phase && Bool(C_keepalive_status)){
-            sofTransferI := True
-            inTransferI := Bool(C_keepalive_type)
-
-            if (C_keepalive_type) {
-              tokenPidI(1 downto 0) := B"00"
-            } else {
-              tokenPidI := 0xa5
-              tokenDevI := sSofDev
-              tokenEpI := sSofEp
-              dataLenI := 0
-              rSofCounter := rSofCounter + 1
-            }
-
-            respExpectedI := False
-            startI := True
+          when (sSofKeepalive && Bool(C_keepalive_status)){
+            startSof
+            sofKeepalive
           } otherwise {
             startI := False
           }
