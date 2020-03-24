@@ -32,20 +32,20 @@ class UsbHidTest(fast : Boolean = false) extends Component {
     counter := counter + 1
 
     val enableArea = new ClockEnableArea(counter === 7) {
-      val usbHostHid = new UsbHostHid(
-        C_usb_speed = if (fast) 1 else 0,
-        C_report_length = 10,
-        C_report_length_strict = false,
-        C_report_interval = 16,
-        C_report_endpoint = 1,
-        C_setup_retry = 4,
-        C_setup_interval = 17,
-        C_keepalive_setup = true,
-        C_keepalive_status = true,
-        C_keepalive_report = true,
-        C_keepalive_phase = 2048,
-        C_keepalive_phase_bits = if (fast) 15 else 12,
-        C_keepalive_type = !fast)
+      val usbHostHid = new UsbHostHid(UsbHostHidGenerics(
+        usbSpeed = if (fast) 1 else 0,
+        reportLength = 10,
+        reportLengthStrict = false,
+        reportInterval = 16,
+        reportEndpoint = 1,
+        setupRetry = 4,
+        setupInterval = 17,
+        keepaliveSetup = true,
+        keepaliveStatus = true,
+        keepaliveReport = true,
+        keepalivePhase = 2048,
+        keepalivePhaseBits = if (fast) 15 else 12,
+        keepaliveType = !fast))
 
       usbHostHid.io.usbDif := io.usb_fpga_bd_dp
       usbHostHid.io.usbDp <> io.usb_fpga_bd_dp

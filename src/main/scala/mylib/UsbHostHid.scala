@@ -3,31 +3,27 @@ package mylib
 import spinal.core._
 import spinal.lib._
 
+case class UsbHostHidGenerics(setupRetry : Int = 4,
+                              setupInterval : Int = 17,
+                              reportInterval : Int = 16,
+                              reportLength : Int = 10,
+                              reportLengthStrict: Boolean = false,
+                              reportEndpoint : Int = 1,
+                              keepaliveSetup : Boolean = true,
+                              keepaliveStatus : Boolean = true,
+                              keepaliveReport: Boolean = true,
+                              keepalivePhaseBits : Int = 12,
+                              keepalivePhase : Int = 2048,
+                              keepaliveType : Boolean = true,
+                              setupRomFile : String = "usbh_setup_rom.mem",
+                              setupRomLength : Int = 16,
+                              dataStatusEnable : Boolean = false,
+                              usbSpeed : Int = 0) {
+}
+
 // Uses the USB Serial Interface Engine (SIE) to set up a Hid device
 // And read hid reports from it
-class UsbHostHid(
-  C_setup_retry : Int = 4,
-  C_setup_interval : Int = 17,
-  C_report_interval : Int = 16,
-  C_report_endpoint : Int = 1,
-  C_report_length : Int = 10,
-  C_report_length_strict : Boolean = false,
-  C_keepalive_setup : Boolean = true,
-  C_keepalive_status : Boolean = true,
-  C_keepalive_report : Boolean = true,
-  C_keepalive_phase_bits : Int = 12, // keepalive/sof frequency 12:low speed, 15:full speed
-  // NOTE: C_keepalive_phase_bits=12 at C_usb_speed=0 ( 6 MHz)
-  //    or C_keepalive_phase_bits=15 at C_usb_speed=1 (48 MHz)
-  //  will send keepalive/SOF every 0.68 ms
-  // USB standard requires keepalive < 1 ms but SOF every 1 ms +-1%
-  // so far all full-speed devices tested accept SOF at 0.68 ms rate
-  C_keepalive_phase : Int = 2048, // 4044:KEEPALIVE low speed, 2048:low/full speed good for both
-  C_keepalive_type : Boolean = true, // 1:KEEPALIVE low speed (may work for full speed, LUT saver), 0:SOF full speed
-  C_setup_rom_file : String = "usbh_setup_rom.mem",
-  C_setup_rom_len : Int = 16,
-  // FIXME: For C_usb_speed=1 reset timing is 4x shorter than required by USB standard
-  C_usb_speed : Int = 0 // '0':6 MHz low speed '1':48 MHz full speed
-) extends Component {
+class UsbHostHid(g: UsbHostHidGenerics) extends Component {
   val io = new Bundle {
     val usbDif = in Bool
     val usbDp = inout(Analog(Bool))
@@ -35,16 +31,14 @@ class UsbHostHid(
     val led = out Bits(8 bits)
     val rxCount = out UInt(16 bits)
     val rxDone = out Bool
-    val hidReport = out Bits(C_report_length * 8 bits)
+    val hidReport = out Bits(g.reportLength * 8 bits)
     val hidValid = out Bool
   }
 
-  val C_datastatus_enable = False
-
-  val C_STATE_DETACHED = B"00"
-  val C_STATE_SETUP = B"01"
-  val C_STATE_REPORT = B"10"
-  val C_STATE_DATA = B"11"
+  val STATE_DETACHED = B"00"
+  val STATE_SETUP = B"01"
+  val STATE_REPORT = B"10"
+  val STATE_DATA = B"11"
 
   // Registers
   val rSetupRomAddr = Reg(UInt(8 bits)) init 0
@@ -55,7 +49,7 @@ class UsbHostHid(
   val rDataStatus = Reg(Bool) init False
   val rPacketCounter = Reg(UInt(16 bits)) init 0
   val rState = Reg(Bits(2 bits)) init 0
-  val rRetry = Reg(UInt(C_setup_retry+1 bits)) init 0
+  val rRetry = Reg(UInt(g.setupRetry+1 bits)) init 0
   val rSlow = Reg(UInt(18 bits)) init 0
   val rResetPending = Reg(Bool) init True
   val rResetAccepted = Reg(Bool) init False
@@ -83,14 +77,14 @@ class UsbHostHid(
   val rTxOverDebug = Reg(Bool) init True
   val rSofCounter = Reg(UInt(11 bits)) init 0
   
-  val rReportBuf = Mem(Bits(8 bits), C_report_length)
+  val rReportBuf = Mem(Bits(8 bits), g.reportLength)
   val rRxCount = Reg(UInt(16 bits)) init 0
   val rRxDone = Reg(Bool) init False
   val rCrcErr = Reg(Bool) init False
   val rHidValid = Reg(Bool) init False
   
-  val C_setup_rom = Mem(Bits(8 bits), wordCount = C_setup_rom_len)
-  C_setup_rom.initialContent = Tools.readmemh(C_setup_rom_file)
+  val setupRom = Mem(Bits(8 bits), wordCount = g.setupRomLength)
+  setupRom.initialContent = Tools.readmemh(g.setupRomFile)
 
   // Wires
   val sRxd = Bool
@@ -116,7 +110,7 @@ class UsbHostHid(
   val crcErrO = Bool
   val rxPushO = Bool
 
-  val txDataI = C_setup_rom(rSetupRomAddr.resized)
+  val txDataI = setupRom(rSetupRomAddr.resized)
   val sSofDev = rSofCounter(10 downto 4).asBits
   val sSofEp = rSofCounter(3 downto 0).asBits
 
@@ -133,14 +127,14 @@ class UsbHostHid(
                         tokenEpI(2).asBits ##
                         tokenEpI(3).asBits
 
-  val sReportLengthOK = Bool(C_report_length_strict) ? 
-                         (rRxCount === C_report_length) | 
+  val sReportLengthOK = Bool(g.reportLengthStrict) ? 
+                         (rRxCount === g.reportLength) | 
                          (rRxCount =/= 0)
 
-  val sSofKeepalive = rSlow(C_keepalive_phase_bits-1 downto 0) === C_keepalive_phase
+  val sSofKeepalive = rSlow(g.keepalivePhaseBits-1 downto 0) === g.keepalivePhase
   val sTimeout = timeoutO && !rTimeout
 
-  if (C_usb_speed == 1) {
+  if (g.usbSpeed == 1) {
     sRxd := io.usbDif
     sRxdp := io.usbDp
     sRxdn := io.usbDn
@@ -178,7 +172,7 @@ class UsbHostHid(
   rTimeout := timeoutO
 
   def setupRetry = {
-    when (!rRetry(C_setup_retry)) {
+    when (!rRetry(g.setupRetry)) {
       rRetry := rRetry + 1
     }
   }
@@ -193,11 +187,11 @@ class UsbHostHid(
     rTxOverDebug := False
   } otherwise {
     switch (rState) {
-      is(C_STATE_DETACHED) {
+      is(STATE_DETACHED) {
         rDevAddressConfirmed := 0
         rRetry := 0
       }
-      is(C_STATE_SETUP) {
+      is(STATE_SETUP) {
         when (sTransmissionOver) {
           rTxOverDebug := True
           when (tokenPidI === 0x2d) {
@@ -217,7 +211,7 @@ class UsbHostHid(
         }
         rStoredResponse := 0
       }
-      is(C_STATE_REPORT) {
+      is(STATE_REPORT) {
         when (sTransmissionOver) {
           when (sTimeout) {
             setupRetry
@@ -265,12 +259,12 @@ class UsbHostHid(
 
   // Process 8-byte setup packet
   switch (rState) {
-    is(C_STATE_DETACHED) {
+    is(STATE_DETACHED) {
       rDevAddressRequested := 0
       rSetAddressFound := False
       rWLength := 0
     }
-    is(C_STATE_SETUP) {
+    is(STATE_SETUP) {
       switch (rSetupByteCounter(2 downto 0)) {
         is(U"000") {
           rFirstByte0Found := txDataI === 0
@@ -307,8 +301,8 @@ class UsbHostHid(
   }
 
   def sofKeepalive = {
-    inTransferI := Bool(C_keepalive_type)
-    if (C_keepalive_type) {
+    inTransferI := Bool(g.keepaliveType)
+    if (g.keepaliveType) {
       tokenPidI(1 downto 0) := B"00"
     } else {
       tokenPidI := 0xa5
@@ -323,7 +317,7 @@ class UsbHostHid(
 
   // State machine
   switch (rState) {
-    is(C_STATE_DETACHED) {
+    is(STATE_DETACHED) {
       rResetAccepted := False
       when (sLINESTATE === B"01") {
         when (!rSlow.msb) {
@@ -337,22 +331,22 @@ class UsbHostHid(
           rCtrlIn := False
           rPacketCounter := 0
           rSofCounter := 0
-          rState := C_STATE_SETUP
+          rState := STATE_SETUP
         }
       } otherwise {
         startI := False
         rSlow := 0
       }
     }
-    is(C_STATE_SETUP) {
+    is(STATE_SETUP) {
       when (idleO) {
-        when (!rSlow(C_setup_interval)) {
+        when (!rSlow(g.setupInterval)) {
           rSlow := rSlow + 1
-          when (rRetry(C_setup_retry)) {
+          when (rRetry(g.setupRetry)) {
             rResetAccepted := True
-            rState := C_STATE_DETACHED
+            rState := STATE_DETACHED
           }
-          when (sSofKeepalive && Bool(C_keepalive_setup)) {
+          when (sSofKeepalive && Bool(g.keepaliveSetup)) {
             startSof
             sofKeepalive
           } otherwise {
@@ -364,10 +358,10 @@ class UsbHostHid(
           tokenDevI := rDevAddressConfirmed
           tokenEpI := 0
           respExpectedI := True
-          when (rSetupRomAddr === C_setup_rom_len) {
+          when (rSetupRomAddr === g.setupRomLength) {
             dataLenI := 0
             startI := False
-            rState := C_STATE_REPORT
+            rState := STATE_REPORT
           } otherwise {
             inTransferI := False
             tokenPidI := 0x2d
@@ -378,10 +372,10 @@ class UsbHostHid(
                 rCtrlIn := True
                 rDataStatus := False
               } otherwise {
-                rDataStatus := C_datastatus_enable
+                rDataStatus := Bool(g.dataStatusEnable)
               }
               dataIdxI := True
-              rState := C_STATE_DATA
+              rState := STATE_DATA
             } otherwise {
               dataIdxI := False
               rCtrlIn := txDataI(7)
@@ -394,11 +388,11 @@ class UsbHostHid(
         startI := False
       }
     }
-    is(C_STATE_REPORT) {
+    is(STATE_REPORT) {
       when (idleO) {
-        when (!rSlow(C_report_interval)) {
+        when (!rSlow(g.reportInterval)) {
           rSlow := rSlow + 1
-          when (sSofKeepalive && Bool(C_keepalive_report)) {
+          when (sSofKeepalive && Bool(g.keepaliveReport)) {
             startSof
             sofKeepalive
           } otherwise {
@@ -409,16 +403,16 @@ class UsbHostHid(
           sofTransferI := False
           inTransferI := True
           tokenPidI := 0x69
-          if (!C_keepalive_type) {
+          if (!g.keepaliveType) {
             tokenDevI := rDevAddressConfirmed
           }
-          tokenEpI := C_report_endpoint
+          tokenEpI := g.reportEndpoint
           dataIdxI := False
           respExpectedI := True
           startI := True
-          when (rResetPending || sLINESTATE === B"00" || rRetry(C_setup_retry)) {
+          when (rResetPending || sLINESTATE === B"00" || rRetry(g.setupRetry)) {
             rResetAccepted := True
-            rState := C_STATE_DETACHED
+            rState := STATE_DETACHED
           }
         }
       } otherwise {
@@ -426,15 +420,15 @@ class UsbHostHid(
       }
     }
     default {
-      // C_STATE_DATA
+      // STATE_DATA
       when (idleO) {
-        when (!rSlow(C_setup_interval)) {
+        when (!rSlow(g.setupInterval)) {
           rSlow := rSlow + 1
-          when (rRetry(C_setup_retry)) {
+          when (rRetry(g.setupRetry)) {
             rResetAccepted := True
-            rState := C_STATE_DETACHED
+            rState := STATE_DETACHED
           }
-          when (sSofKeepalive && Bool(C_keepalive_status)){
+          when (sSofKeepalive && Bool(g.keepaliveStatus)){
             startSof
             sofKeepalive
           } otherwise {
@@ -445,7 +439,7 @@ class UsbHostHid(
           sofTransferI := False
           inTransferI := rCtrlIn
           tokenPidI := rCtrlIn  ? B(0x69, 8 bits) | B(0xe1, 8 bits)
-          if (!C_keepalive_type) (tokenDevI := rDevAddressConfirmed)
+          if (!g.keepaliveType) (tokenDevI := rDevAddressConfirmed)
           tokenEpI := 0
           respExpectedI := True
           when (rBytesRemaining =/= 0) {
@@ -464,7 +458,7 @@ class UsbHostHid(
               when (rBytesRemaining(15 downto 3) === 0) {
                 rCtrlIn := False
                 when (!rDataStatus) {
-                  rState := C_STATE_SETUP
+                  rState := STATE_SETUP
                 }
               } otherwise {
                 rAdvanceData := True
@@ -479,7 +473,7 @@ class UsbHostHid(
             when (rStoredResponse === 0xd2) {
               rAdvanceData := True
               when (rDataStatus) {
-                rState := C_STATE_SETUP
+                rState := STATE_SETUP
               } otherwise {
                 when (rBytesRemaining === 0) {
                   rCtrlIn := True
@@ -558,10 +552,10 @@ class UsbHostHid(
   }
 
   rHidValid := (rRxDone && !rxDoneO && !rCrcErr && !timeoutO && 
-                rState === C_STATE_REPORT && sReportLengthOK)
+                rState === STATE_REPORT && sReportLengthOK)
 
-  for (i <- 0 to C_report_length - 1) {
-    io.hidReport(i*8+7 downto i*8) := rReportBuf(U(i, log2Up(C_report_length) bits))
+  for (i <- 0 to g.reportLength - 1) {
+    io.hidReport(i*8+7 downto i*8) := rReportBuf(U(i, log2Up(g.reportLength) bits))
   }
 
   io.hidValid := rHidValid
