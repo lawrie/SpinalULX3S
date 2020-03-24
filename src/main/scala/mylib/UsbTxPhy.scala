@@ -136,7 +136,7 @@ class UsbTxPhy extends Component {
     }
   }
 
-  // RRZI encoder
+  // NRZI encoder
   when (!rTxIpSync || !rTxoeR1 || rLineCtrlI) {
     when (rLineCtrlI) {
       rSdNrziO := sLong
