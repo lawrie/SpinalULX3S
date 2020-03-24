@@ -48,6 +48,11 @@ class UsbHidTest(fast : Boolean = false) extends Component {
 
     io.usb_fpga_pu_dp := False
     io.usb_fpga_pu_dn := False
+    
+    val hidReport = usbHostHid.io.hidReport
+
+    val usbHid2Ascii = new UsbHid2Ascii
+    usbHid2Ascii.io.hidReport := hidReport(23 downto 16) ## hidReport(7 downto 0)
 
     val oledHex = new SSD1331Hex(64)
     io.oled_csn := oledHex.io.oled_csn
@@ -55,7 +60,7 @@ class UsbHidTest(fast : Boolean = false) extends Component {
     io.oled_mosi := oledHex.io.oled_mosi
     io.oled_dc := oledHex.io.oled_dc
     io.oled_resn := oledHex.io.oled_resn
-    oledHex.io.data := usbHostHid.io.hidReport(63 downto 0)
+    oledHex.io.data := usbHid2Ascii.io.ascii ## hidReport(55 downto 0)
 
     io.led := usbHostHid.io.led
   }
