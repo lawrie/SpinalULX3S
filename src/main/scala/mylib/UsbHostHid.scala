@@ -239,7 +239,7 @@ class UsbHostHid(g: UsbHostHidGenerics) extends Component {
     }
   }
 
-  // Setup rom address advance, retry logic and adrress acceptance
+  // Setup rom address advance, retry logic and address acceptance
   when (rResetAccepted) {
     rSetupRomAddr := 0
     rSetupRomAddrAcked := 0
