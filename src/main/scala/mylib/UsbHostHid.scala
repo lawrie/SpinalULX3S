@@ -3,6 +3,27 @@ package mylib
 import spinal.core._
 import spinal.lib._
 
+import spinal.lib.bus.amba3.apb.{Apb3, Apb3Config, Apb3SlaveFactory}
+import spinal.lib.bus.misc.BusSlaveFactory
+
+case class Usb() extends Bundle with IMasterSlave {
+  val dif = Bool
+  val dp = Analog(Bool)
+  val dn = Analog(Bool)
+
+  override def asMaster() = {
+    in(dif)
+    inout(dp, dn)
+  }
+}
+
+case class Hid(g: UsbHostHidGenerics) extends Bundle with IMasterSlave {
+  val report = Bits(g.reportLength*8 bits)
+  val valid = Bool
+
+  def asMaster() = this.asOutput()
+}
+
 case class UsbHostHidGenerics(setupRetry : Int = 4,
                               setupInterval : Int = 17,
                               reportInterval : Int = 16,
@@ -21,18 +42,59 @@ case class UsbHostHidGenerics(setupRetry : Int = 4,
                               usbSpeed : Int = 0) {
 }
 
+case class UsbKeyboardCtrl() extends Component {
+  val io = new Bundle {
+    val usb = master(Usb())
+    val read = master(Flow(Bits(8 bits)))
+    val diag = out Bits(5 bits)
+  }
+
+  val counter = Reg(UInt(3 bits))
+  counter := counter + 1
+
+  // Reduce clock from 48Mhz to 6Mhz for slow speed USB
+  val enableArea = new ClockEnableArea(counter === 7) {
+    val usbHostHid = new UsbHostHid(UsbHostHidGenerics())
+    usbHostHid.io.usb <> io.usb
+
+    val hidReport = usbHostHid.io.hid.report
+    val usbHid2Ascii = new UsbHid2Ascii
+    usbHid2Ascii.io.hidReport := hidReport(23 downto 16) ## hidReport(7 downto 0)
+
+    io.diag := usbHostHid.io.led
+    io.read.valid := usbHostHid.io.hid.valid
+    io.read.payload := usbHid2Ascii.io.ascii
+  }
+
+  def driveFrom(busCtrl : BusSlaveFactory, baseAddress : Int = 0) () = new Area {
+    val (stream, fifoOccupancy) = io.read.queueWithOccupancy(16)
+    busCtrl.readStreamNonBlocking(stream, baseAddress, validBitOffset = 8, payloadBitOffset = 0)
+  }
+}
+
+/*
+ * Ascii -> 0x00 Read register to read the next key from the keyboard
+ **/
+case class Apb3UsbKeyboardCtrl() extends Component {
+  val io = new Bundle {
+    val apb = slave(Apb3(Apb3Config(addressWidth = 4, dataWidth = 32)))
+    val usb = master(Usb())
+  }
+
+  val busCtrl = Apb3SlaveFactory(io.apb)
+  val usbKeyboardCtrl = UsbKeyboardCtrl()
+  io.usb <> usbKeyboardCtrl.io.usb
+
+  usbKeyboardCtrl.driveFrom(busCtrl)()
+}
+  
 // Uses the USB Serial Interface Engine (SIE) to set up a Hid device
 // And read hid reports from it
 class UsbHostHid(g: UsbHostHidGenerics) extends Component {
   val io = new Bundle {
-    val usbDif = in Bool
-    val usbDp = inout(Analog(Bool))
-    val usbDn = inout(Analog(Bool))
+    val usb = master(Usb())
+    val hid = master(Hid(g))
     val led = out Bits(8 bits)
-    val rxCount = out UInt(16 bits)
-    val rxDone = out Bool
-    val hidReport = out Bits(g.reportLength * 8 bits)
-    val hidValid = out Bool
   }
 
   val STATE_DETACHED = B"00"
@@ -135,17 +197,17 @@ class UsbHostHid(g: UsbHostHidGenerics) extends Component {
   val sTimeout = timeoutO && !rTimeout
 
   if (g.usbSpeed == 1) {
-    sRxd := io.usbDif
-    sRxdp := io.usbDp
-    sRxdn := io.usbDn
-    when (!sTxoe) (io.usbDp := sTxdp)
-    when (!sTxoe) (io.usbDn := sTxdn)
+    sRxd := io.usb.dif
+    sRxdp := io.usb.dp
+    sRxdn := io.usb.dn
+    when (!sTxoe) (io.usb.dp := sTxdp)
+    when (!sTxoe) (io.usb.dn := sTxdn)
   } else {
-    sRxd := ~io.usbDif
-    sRxdp := io.usbDn
-    sRxdn := io.usbDp
-    when (!sTxoe) (io.usbDp := sTxdn)
-    when (!sTxoe) (io.usbDn := sTxdp)
+    sRxd := ~io.usb.dif
+    sRxdp := io.usb.dn
+    sRxdn := io.usb.dp
+    when (!sTxoe) (io.usb.dp := sTxdn)
+    when (!sTxoe) (io.usb.dn := sTxdp)
   }
 
   val usbPhy = new UsbPhy
@@ -555,12 +617,10 @@ class UsbHostHid(g: UsbHostHidGenerics) extends Component {
                 rState === STATE_REPORT && sReportLengthOK)
 
   for (i <- 0 to g.reportLength - 1) {
-    io.hidReport(i*8+7 downto i*8) := rReportBuf(U(i, log2Up(g.reportLength) bits))
+    io.hid.report(i*8+7 downto i*8) := rReportBuf(U(i, log2Up(g.reportLength) bits))
   }
 
-  io.hidValid := rHidValid
-  io.rxCount := rxCountO
-  io.rxDone := rxDoneO
+  io.hid.valid := rHidValid
 
   io.led := B"0" ## rResetPending.asBits ## rTxOverDebug.asBits ## 
             rSetupRomAddrAcked(3).asBits ## sLINESTATE ## rState

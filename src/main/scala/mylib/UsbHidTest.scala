@@ -47,14 +47,14 @@ class UsbHidTest(fast : Boolean = false) extends Component {
         keepalivePhaseBits = if (fast) 15 else 12,
         keepaliveType = !fast))
 
-      usbHostHid.io.usbDif := io.usb_fpga_bd_dp
-      usbHostHid.io.usbDp <> io.usb_fpga_bd_dp
-      usbHostHid.io.usbDn <> io.usb_fpga_bd_dn
+      usbHostHid.io.usb.dif := io.usb_fpga_bd_dp
+      usbHostHid.io.usb.dp <> io.usb_fpga_bd_dp
+      usbHostHid.io.usb.dn <> io.usb_fpga_bd_dn
 
       io.usb_fpga_pu_dp := False
       io.usb_fpga_pu_dn := False
     
-      val hidReport = usbHostHid.io.hidReport
+      val hidReport = usbHostHid.io.hid.report
 
       val usbHid2Ascii = new UsbHid2Ascii
       usbHid2Ascii.io.hidReport := hidReport(23 downto 16) ## hidReport(7 downto 0)
