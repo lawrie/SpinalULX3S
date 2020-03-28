@@ -1,4 +1,4 @@
-VERILOG ?= UsbHidTest.v pll_usb.v
+VERILOG ?= TopAudio.v
 
 prog: bin/toplevel.bit
 	ujprog $<
@@ -15,7 +15,7 @@ bin/toplevel.config: bin/toplevel.json
 	nextpnr-ecp5 \
 		--json $< \
 		--textcfg $@ \
-		--lpf ulx3s_usb.lpf \
+		--lpf ulx3s_v20.lpf \
 		--85k \
 		--package CABGA381
 
