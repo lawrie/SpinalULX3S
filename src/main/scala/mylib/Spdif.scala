@@ -27,10 +27,11 @@ class Spdif(
   val rDataOutBuffer = Reg(UInt(8 bits))
   val rParity = Reg(Bool)
   val rChannelStatusShift = Reg(UInt(24 bits))
-  val rChannelStatus = Reg(UInt(24 bits)) init U"001000000000000001000000"
+  
+  val channelStatus = U"001000000000000001000000"
  
   rPhaseAccu := rPhaseAccu + phaseIncrement
-  rClkdivShift := rClkdivShift(0).asUInt @@ rClkdivShift(1).asUInt
+  rClkdivShift := rClkdivShift(0).asUInt @@ rPhaseAccu(phaseAccuBits - 1).asUInt
 
   when (rClkdivShift === U"01") {
     rBitCounter := rBitCounter + 1
@@ -61,22 +62,22 @@ class Spdif(
 
   when (rClkdivShift === U"01") {
     when (rBitCounter === U"111111") {
-      when (rFrameCounter === U"10010011") {
+      when (rFrameCounter === U"101111111") {
         io.addressOut := False
-        rChannelStatusShift := rChannelStatus
-        rDataOutBuffer := U"10010110"
+        rChannelStatusShift := channelStatus
+        rDataOutBuffer := U"10011100"
       } otherwise {
         when (rFrameCounter(0)) {
           rChannelStatusShift := rChannelStatusShift(22 downto 0) @@ U"0"
-          rDataOutBuffer := U"10010110"
+          rDataOutBuffer := U"10010011"
           io.addressOut := False
         } otherwise {
-          rDataOutBuffer := U"10010011"
+          rDataOutBuffer := U"10010110"
           io.addressOut := True
         }
       }
     } otherwise {
-      when (rBitCounter === U"111") {
+      when (rBitCounter(2 downto 0) === U"111") {
         switch (rBitCounter(5 downto 3)) {
           is(U"000") {
             rDataOutBuffer := U"1" @@ rDataInBuffer(0).asUInt @@
